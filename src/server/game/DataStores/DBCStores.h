@@ -70,6 +70,7 @@ TC_GAME_API extern DBCStorage <ChrClassesEntry>              sChrClassesStore;
 TC_GAME_API extern DBCStorage <ChrRacesEntry>                sChrRacesStore;
 TC_GAME_API extern DBCStorage <ChrPowerTypesEntry>           sChrPowerTypesStore;
 TC_GAME_API extern DBCStorage <ChrSpecializationEntry>       sChrSpecializationStore;
+TC_GAME_API extern DBCStorage <CharSectionsEntry>            sCharSectionsStore;
 TC_GAME_API extern DBCStorage <CharSectionsEntry>            sChrSectionStore;
 TC_GAME_API extern DBCStorage <CinematicCameraEntry>         sCinematicCameraStore;
 TC_GAME_API extern DBCStorage <CinematicSequencesEntry>      sCinematicSequencesStore;
