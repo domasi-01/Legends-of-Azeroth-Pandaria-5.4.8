@@ -183,3 +183,132 @@ No unrelated cleanup or refactoring is included.
 ### Upstream Reporting
 
 Prepare issue/PR for Legends-of-Azeroth after successful Realmwalkers testing.
+
+---
+
+# RW-FIX-002
+## Game event GameObject AI null-pointer dereference
+
+### Status
+Confirmed upstream defect - patched and runtime-validated.
+
+### Component
+Game Events / GameObject AI
+
+### File
+`src/server/game/Events/GameEventMgr.cpp`
+
+### Symptom
+
+Worldserver crashes during startup after Playerbots initialization.
+
+The crash resolves inside:
+
+`GameEventMgr::RunSmartAIScripts(uint16, bool)`
+
+Disassembly at the crash shows a pointer loaded from the GameObject AI member and
+then dereferenced while null.
+
+### Root Cause
+
+`GameEventAIHookWorker` visits active GameObjects and invokes:
+
+`p.second->AI()->OnGameEvent(_activate, _eventId);`
+
+without checking whether `GameObject::AI()` returned a valid pointer.
+
+However, `GameObject::AI()` simply returns `m_AI`, and GameObject AI
+initialization explicitly permits this value to remain null.
+
+`GameObject::AIM_Initialize()` assigns:
+
+`m_AI = FactorySelector::SelectGameObjectAI(this);`
+
+and then immediately checks:
+
+`if (!m_AI) return false;`
+
+Therefore a GameObject that is in the world may legitimately have no AI
+instance.
+
+### Evidence
+
+The creature branch of the same worker protects its AI call with
+`IsAIEnabled`.
+
+The GameObject branch currently checks only:
+
+`p.second->IsInWorld()`
+
+before dereferencing its AI pointer.
+
+The crash assembly is consistent with a null `GameObjectAI*` dereference.
+
+The core also contains multiple examples where callers explicitly test
+GameObject `AI()` before use.
+
+### Applied Fix
+
+Guard the GameObject AI pointer before invoking `OnGameEvent()`.
+
+No GameObject construction behavior, event logic, database content, or AI
+selection logic is changed.
+
+### Build Validation
+
+Worldserver rebuilt successfully from the patched source.
+
+Build result:
+
+- Exit code: 0
+- Binary:
+  `/srv/realmwalkers-mop/build/src/server/worldserver/worldserver`
+- SHA256:
+  `68e3a5982f3226ca3f5e3b7a712c0a72e1118b2d8e155d47ca1ff641fb876047`
+
+### Runtime Validation
+
+The patched worldserver was started as the `realmwalkers` service account using:
+
+`/etc/realmwalkers-mop/worldserver-test.conf`
+
+and the staged fresh MoP 5.4.8 build 18414 extracted data.
+
+The previous crash in:
+
+`GameEventMgr::RunSmartAIScripts(uint16, bool)`
+
+was not reproduced.
+
+Playerbots initialized successfully and reported:
+
+- 200 random bot accounts
+- 1996 characters available
+- 63 farming cache zones
+- 1230 farming spots
+- 123 city zones
+- `AI Playerbots initialized`
+
+Startup continued beyond the previous crash through SmartAI, calendar,
+archaeology, battle pet, Battle Pay, and challenge-mode initialization.
+
+After the startup test window:
+
+- worldserver remained running
+- TCP port 8085 was listening on `0.0.0.0`
+- no GameEventMgr crash was detected
+- no kernel crash event was reported for the test
+
+### Validation Result
+
+RW-FIX-002 is considered runtime-validated.
+
+The source change is limited to guarding the potentially null `GameObjectAI*`
+before invoking `OnGameEvent()`.
+
+No GameObject construction behavior, event logic, database content, or AI
+selection behavior was changed.
+
+### Upstream Reporting
+
+Prepare issue/PR for Legends-of-Azeroth after successful Realmwalkers testing.

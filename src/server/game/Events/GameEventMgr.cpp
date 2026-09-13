@@ -1735,7 +1735,8 @@ public:
     {
         for (auto const& p : gameObjectMap)
             if (p.second->IsInWorld())
-                p.second->AI()->OnGameEvent(_activate, _eventId);
+                if (GameObjectAI* ai = p.second->AI())
+                    ai->OnGameEvent(_activate, _eventId);
     }
 
     template<class T>
