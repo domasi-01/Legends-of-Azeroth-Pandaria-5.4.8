@@ -1743,3 +1743,73 @@ Realmwalkers already suppresses achievement progress for Playerbot sessions. The
 - `3e36b78579 Realmwalkers: suppress achievements for AHBot account`
 
 **Status:** Runtime validated.
+
+## RW-FEATURE-002 - Dedicated AuctionHouseBot mount inventory priority
+
+Status: Runtime validated
+
+### Purpose
+Give legitimate auctionable mounts their own AuctionHouseBot seller inventory target so mounts can be prioritized independently from the generic Miscellaneous item class.
+
+Realmwalkers desired seller priority:
+- Trade Goods: 10
+- Mounts: 9
+- Weapons: 8
+- Armor: 7
+- Containers: 6
+
+Buyer remains disabled.
+
+### Problem
+AuctionHouseBot originally grouped mounts into ITEM_CLASS_MISCELLANEOUS. Seller inventory targets were tracked only by quality and item class, so mounts could not receive a dedicated priority.
+
+With AuctionHouseBot.Items.Misc disabled, legitimate crafted/non-vendor mounts could also be rejected by the generic non-vendor/non-loot source filter.
+
+### Realmwalkers change
+- Added AuctionHouseBot.Class.Mount with default priority 9 and maximum 10.
+- Added a dedicated mount item pool indexed by auction quality.
+- Added dedicated mount target and missing-item accounting.
+- Added per-cycle mount accounting during auction creation.
+- Mounts are selected from the dedicated mount pool instead of satisfying the normal Miscellaneous target.
+- The vendor/loot source rejection is bypassed only for mount-class items.
+- Mounts still pass the existing binding, price, quality, required-level, required-skill, and miscellaneous safety filters.
+- Global AuctionHouseBot.Items.Misc remains disabled.
+- Bind.Pickup remains disabled.
+- Bind.Quest remains disabled.
+
+### Production configuration
+- AuctionHouseBot.Class.TradeGood = 10
+- AuctionHouseBot.Class.Mount = 9
+- AuctionHouseBot.Class.Weapon = 8
+- AuctionHouseBot.Class.Armor = 7
+- AuctionHouseBot.Class.Container = 6
+- AuctionHouseBot.Class.Misc = 2
+- AuctionHouseBot.Seller.Enabled = 1
+- AuctionHouseBot.Buyer.Enabled = 0
+- AuctionHouseBot.Items.Misc = 0
+- AuctionHouseBot.Bind.Pickup = 0
+- AuctionHouseBot.Bind.Quest = 0
+
+### Runtime validation - 2026-09-14
+- worldserver compiled successfully with cmake build return code 0.
+- Activated binary SHA256: c1c227e9c52a26f9c9dcfe2bebea3609fd790a8fd911bc1bed80adeae55c295a
+- worldserver restarted cleanly and port 8085 remained available.
+- AuctionHouseBot seller remained enabled.
+- AuctionHouseBot buyer remained disabled.
+- Live auction count increased from 100 to 104.
+- Four dedicated mount auctions were generated during the validation cycle.
+- Generated mounts:
+  - Vial of the Sands
+  - Ruby Panther
+  - Sunstone Panther
+  - Sapphire Panther
+- All generated mount auctions had bonding = 0.
+- Expected mount IDs matched: 4.
+- Unexpected mount IDs: 0.
+- Non-Bind-None mount auctions: 0.
+- No worldserver errors, assertions, crashes, or service failures were observed.
+
+### Classification
+This is a Realmwalkers-specific AuctionHouseBot inventory feature rather than an upstream defect fix.
+
+Keep this feature isolated from unrelated upstream bug-fix pull requests.
