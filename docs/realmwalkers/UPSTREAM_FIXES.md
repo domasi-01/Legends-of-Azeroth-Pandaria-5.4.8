@@ -623,3 +623,287 @@ The separate WorldSession bot-identification defect discovered while testing
 this feature is tracked as RW-FIX-004 and is appropriate for upstream reporting.
 
 ---
+## RW-FIX-003 - Clear movement followers before Unit removal
+
+### Status
+
+Confirmed upstream defect. Patched and runtime validated.
+
+### Problem
+
+Worldserver could crash during map/grid cleanup or shutdown while destroying a
+`ChaseMovementGenerator`.
+
+GDB captured the failure in the following cleanup path:
+
+    AbstractFollower::SetTarget(Unit*)
+    ChaseMovementGenerator::~ChaseMovementGenerator()
+    MotionMaster::DirectClear()
+    MotionMaster::Clear(bool)
+    Unit::RemoveFromWorld()
+    Creature::RemoveFromWorld()
+    Unit::CleanupBeforeRemoveFromMap(bool)
+    Unit::CleanupsBeforeDelete(bool)
+    ObjectGridCleaner::Visit<Creature>(...)
+    Map::UnloadGrid(...)
+    Map::UnloadAll()
+    MapManager::UnloadAll()
+    main()
+
+The failure occurred while `ChaseMovementGenerator` was being destroyed.
+`ChaseMovementGenerator` inherits from `AbstractFollower`.
+
+`AbstractFollower` stores a raw pointer to the Unit it follows. Its destructor
+calls:
+
+    SetTarget(nullptr);
+
+The relevant implementation is:
+
+    void AbstractFollower::SetTarget(Unit* unit)
+    {
+        if (unit == _target)
+            return;
+
+        if (_target)
+            _target->FollowerRemoved(this);
+
+        _target = unit;
+
+        if (_target)
+            _target->FollowerAdded(this);
+    }
+
+This means destruction of an `AbstractFollower` dereferences its previous
+`_target` in order to unregister itself.
+
+### Root Cause
+
+The MoP branch already maintains a collection of followers on each Unit:
+
+    std::set<AbstractFollower*> _followers;
+
+and provides:
+
+    void FollowerAdded(AbstractFollower* follower)
+    {
+        _followers.insert(follower);
+    }
+
+    void FollowerRemoved(AbstractFollower* follower)
+    {
+        _followers.erase(follower);
+    }
+
+However, the local MoP implementation had no corresponding target-side cleanup
+that detached those followers when the target Unit was removed from the world.
+
+As a result, the following lifetime sequence was possible:
+
+1. A movement generator follows a Unit.
+2. `AbstractFollower` stores the target Unit pointer.
+3. The target Unit records the follower in `_followers`.
+4. The target Unit is removed or destroyed.
+5. The follower still retains the old target pointer.
+6. The movement generator is later destroyed.
+7. `AbstractFollower::~AbstractFollower()` calls `SetTarget(nullptr)`.
+8. `SetTarget()` calls `_target->FollowerRemoved(this)`.
+9. `_target` now refers to an invalid Unit.
+10. worldserver crashes while dereferencing the stale pointer.
+
+The captured GDB backtrace is consistent with this lifetime failure.
+
+### Upstream Comparison
+
+Current TrinityCore contains the corresponding target-side follower cleanup.
+
+Its Unit implementation provides behavior equivalent to:
+
+    void Unit::RemoveAllFollowers()
+    {
+        while (!m_followingMe.empty())
+            (*m_followingMe.begin())->SetTarget(nullptr);
+    }
+
+and invokes that cleanup from `Unit::RemoveFromWorld()` while the target Unit is
+still valid.
+
+The Legends-of-Azeroth MoP branch retained the follower registration mechanism
+but did not contain this cleanup step.
+
+This makes RW-FIX-003 a small backport of established Unit/follower lifetime
+handling rather than a Realmwalkers-specific behavioral change.
+
+### Local Fix
+
+Affected files:
+
+- `src/server/game/Entities/Unit/Unit.h`
+- `src/server/game/Entities/Unit/Unit.cpp`
+
+A declaration was added to `Unit`:
+
+    void RemoveAllFollowers();
+
+The following implementation was added:
+
+    void Unit::RemoveAllFollowers()
+    {
+        while (!_followers.empty())
+            (*_followers.begin())->SetTarget(nullptr);
+    }
+
+`Unit::RemoveFromWorld()` now performs:
+
+    RemoveAreaAurasDueToLeaveWorld();
+    RemoveAllFollowers();
+
+before continuing with Unit removal.
+
+### Why the While Loop Is Required
+
+`SetTarget(nullptr)` does more than clear the follower's pointer.
+
+It calls:
+
+    _target->FollowerRemoved(this);
+
+which removes that follower from the target Unit's `_followers` set.
+
+Therefore `RemoveAllFollowers()` intentionally processes the first element
+repeatedly until the container becomes empty:
+
+    while (!_followers.empty())
+        (*_followers.begin())->SetTarget(nullptr);
+
+A conventional iterator loop would be inappropriate because each
+`SetTarget(nullptr)` operation mutates the same container being traversed.
+
+### Build Validation
+
+The patched worldserver compiled successfully.
+
+Build result:
+
+    Return code: 0
+
+Patched worldserver SHA256:
+
+    534d26ef4b5f1206114a8144099dc30f5490282b4cc3691187308b7013688bc0
+
+### Pre-Patch Runtime Evidence
+
+Multiple worldserver crashes had previously been recorded during the same
+general cleanup path.
+
+A controlled shutdown of the pre-patch runtime was performed using:
+
+    PID 3533260
+
+The server had initialized normally and was running Playerbots.
+
+SIGTERM was issued to perform a normal shutdown.
+
+The pre-patch worldserver produced a kernel-recorded SIGSEGV during that
+shutdown:
+
+    Sep 14 16:49:37
+    worldserver[3533260]: segfault
+
+This provided a useful A/B comparison for the patched build.
+
+### Patched Runtime Startup Test
+
+The newly compiled RW-FIX-003 binary was then launched from the correct
+Realmwalkers working directory:
+
+    /etc/realmwalkers-mop
+
+using:
+
+    /srv/realmwalkers-mop/build/src/server/worldserver/worldserver
+
+Patched runtime PID:
+
+    3586330
+
+The server initialized successfully.
+
+Playerbots also initialized successfully:
+
+    200 random bot accounts
+    2200 characters available
+    AI Playerbots initialized
+
+The worldserver successfully opened and listened on TCP port 8085.
+
+No startup regression associated with RW-FIX-003 was observed.
+
+### Patched Controlled Shutdown Test
+
+After normal initialization and runtime, SIGTERM was issued to patched PID:
+
+    3586330
+
+During shutdown:
+
+- TCP port 8085 closed.
+- The worldserver process completely disappeared.
+- No remaining worldserver process existed.
+- No worldserver crash was recorded by the kernel.
+- No segmentation fault was recorded.
+- No general protection fault was recorded.
+- No processor trap was recorded.
+
+A kernel-event search beginning at the patched shutdown test time returned:
+
+    No worldserver crash events found.
+
+This contrasts directly with the pre-patch PID 3533260, which produced a
+SIGSEGV during its controlled shutdown.
+
+### Validation Result
+
+PASS.
+
+RW-FIX-003 successfully prevents the stale follower lifetime failure observed
+in the captured GDB shutdown stack.
+
+The patched server:
+
+- builds successfully,
+- initializes the world normally,
+- initializes Playerbots normally,
+- accepts connections on the world port,
+- performs a controlled SIGTERM shutdown,
+- completes map/world cleanup,
+- fully terminates,
+- and produces no kernel crash event.
+
+### Source Commit
+
+The source-code portion of RW-FIX-003 was committed as:
+
+    653ba09456 Unit: clear followers before removal
+
+and pushed to the Realmwalkers `realmwalkers-fixes` branch.
+
+### Upstream Reporting
+
+RW-FIX-003 is considered a confirmed Legends-of-Azeroth defect.
+
+The fix is suitable for a focused upstream issue or pull request because:
+
+- the failure was captured with GDB,
+- the stale follower lifetime can be explained from the source,
+- the MoP branch is missing target-side follower cleanup,
+- current TrinityCore contains the corresponding cleanup mechanism,
+- the local patch is small and isolated,
+- the pre-patch shutdown reproduced the crash,
+- and the patched shutdown completed without the crash.
+
+Any upstream submission should contain only the follower-lifetime fix and
+should remain separate from Realmwalkers-specific policy changes such as
+Playerbot achievement suppression.
+
+---
