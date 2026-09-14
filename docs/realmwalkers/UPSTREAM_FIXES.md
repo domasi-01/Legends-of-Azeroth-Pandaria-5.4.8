@@ -312,3 +312,153 @@ selection behavior was changed.
 ### Upstream Reporting
 
 Prepare issue/PR for Legends-of-Azeroth after successful Realmwalkers testing.
+
+---
+
+# RW-FIX-004
+## Playerbots fail to identify WorldSession as a bot session
+
+### Status
+Confirmed upstream defect - patched and runtime-validated.
+
+### Component
+Playerbots / WorldSession
+
+### Files
+
+- `modules/mod_playerbots/src/Factory/RandomPlayerbotFactory.cpp`
+- `modules/mod_playerbots/src/Manager/PlayerbotMgr.cpp`
+
+### Symptom
+
+Playerbots successfully logged into the world, but calls to:
+
+`WorldSession::IsBot()`
+
+returned false for Playerbot sessions.
+
+This caused code that depends on explicit bot-session identity to treat
+Playerbots as normal player sessions.
+
+The problem became visible while implementing Realmwalkers feature
+RW-FEATURE-001. Despite achievement guards checking `IsBot()`, active
+Playerbots continued to create character and account achievement data.
+
+### Root Cause
+
+The `WorldSession` constructor ends with:
+
+`uint32 recruiter, uint32 flags, bool isARecruiter, bool hasBoost, bool isBot = false`
+
+The Playerbots constructor calls supplied only four arguments after the locale:
+
+`0, false, false, true`
+
+These were therefore interpreted as:
+
+- recruiter = 0
+- flags = 0
+- isARecruiter = false
+- hasBoost = true
+- isBot = omitted and therefore false
+
+As a result, Playerbot sessions were unintentionally created with:
+
+- `hasBoost = true`
+- `isBot = false`
+
+### Evidence
+
+The constructor initializes:
+
+`_isBot{isBot}`
+
+and `WorldSession::IsBot()` returns that value.
+
+Both affected Playerbot call sites omitted the explicit fifth argument needed
+to set `isBot`.
+
+Before the fix, active Playerbots generated achievement data even though
+Realmwalkers achievement guards explicitly rejected sessions for which
+`IsBot()` returned true.
+
+### Applied Fix
+
+Add one explicit `false` argument before the final `true` at both Playerbot
+WorldSession construction sites.
+
+The corrected argument sequence is:
+
+`0, false, false, false, true`
+
+This maps to:
+
+- recruiter = 0
+- flags = 0
+- isARecruiter = false
+- hasBoost = false
+- isBot = true
+
+No unrelated Playerbot behavior or WorldSession logic is changed.
+
+### Build Validation
+
+Worldserver rebuilt successfully from the patched source together with the
+separately tracked Realmwalkers achievement feature.
+
+Build result:
+
+- Exit code: 0
+- Binary:
+  `/srv/realmwalkers-mop/build/src/server/worldserver/worldserver`
+- SHA256:
+  `0bb6e1faadf643567670c4df5248c60b6a2f1bc43d53fedb0508a70a72a73644`
+
+### Runtime Validation
+
+The rebuilt worldserver was started through:
+
+`realmwalkers-world.service`
+
+The running executable was independently verified through `/proc/<pid>/exe`
+and matched the expected SHA256:
+
+`0bb6e1faadf643567670c4df5248c60b6a2f1bc43d53fedb0508a70a72a73644`
+
+Playerbots initialized successfully with:
+
+- 200 random bot accounts
+- 2200 characters available
+- exactly 50 RNDBOT characters online
+
+Before startup, all RNDBOT character and account achievement rows were cleared.
+
+Immediately after startup:
+
+- bot character achievements: 0
+- bot character achievement progress: 0
+- bot account achievements: 0
+- bot account achievement progress: 0
+
+After an additional five-minute runtime test:
+
+- 50 RNDBOT characters remained online
+- bot character achievements remained 0
+- bot character achievement progress remained 0
+- bot account achievements remained 0
+- bot account achievement progress remained 0
+- no relevant kernel crash, trap, OOM, or segfault event occurred
+
+This demonstrates that Playerbot sessions now correctly satisfy `IsBot()` and
+that bot-dependent logic can reliably distinguish them from human sessions.
+
+### Validation Result
+
+RW-FIX-004 is considered runtime-validated.
+
+### Upstream Reporting
+
+This is suitable for a focused Legends-of-Azeroth issue/PR because the defect
+is contained entirely within the Playerbots WorldSession constructor calls.
+
+---
