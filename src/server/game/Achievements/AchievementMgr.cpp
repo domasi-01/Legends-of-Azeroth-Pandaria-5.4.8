@@ -1482,6 +1482,9 @@ void AchievementMgr::UpdateAchievementCriteria(AchievementCriteriaTypes type, ui
         return;
     }
 
+    if (referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+        return;
+
     // disable for gamemasters with GM-mode enabled
     if (referencePlayer->IsGameMaster())
     {
@@ -2196,6 +2199,9 @@ CriteriaProgress* AchievementMgr::GetCriteriaProgress(CriteriaEntry const* entry
 
 void AchievementMgr::SetCriteriaProgress(Criteria const* criteria, uint64 changeValue, Player* referencePlayer, ProgressType ptype)
 {
+    if (referencePlayer && referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+        return;
+
     TC_LOG_DEBUG("achievement", "SetCriteriaProgress(%u, " UI64FMTD ") for (%s GUID: %u)",
                    criteria->Entry->ID, changeValue, GetGUID().GetTypeName(), GetGUID().GetCounter());
 
@@ -2372,6 +2378,9 @@ void PlayerAchievementMgrBase::RemoveCriteriaTimer(CriteriaStartTypes type, uint
 void AchievementMgr::CompletedAchievement(AchievementEntry const* achievement, Player* referencePlayer)
 {
     ASSERT(IsFitTypeCondition(achievement));
+
+    if (referencePlayer && referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+        return;
 
     switch (achievement->ID)
     {
