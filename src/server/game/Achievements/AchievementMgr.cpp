@@ -16,6 +16,7 @@
 */
 
 #include "AchievementMgr.h"
+#include "AuctionHouseBot.h"
 #include "ArenaTeam.h"
 #include "Battleground.h"
 #include "CellImpl.h"
@@ -46,6 +47,23 @@
 #include "PetBattle.h"
 #include "Battleground.h"
 #include "BattlegroundSA.h"
+
+namespace
+{
+    bool IsAchievementSuppressedForServiceAccount(Player const* player)
+    {
+        if (!player || !player->GetSession())
+            return false;
+
+        WorldSession* session = player->GetSession();
+
+        if (session->IsBot())
+            return true;
+
+        uint32 ahBotAccountId = sAuctionBotConfig->GetConfig(CONFIG_AHBOT_ACCOUNT_ID);
+        return ahBotAccountId && session->GetAccountId() == ahBotAccountId;
+    }
+}
 
 namespace Trinity
 {
@@ -1482,7 +1500,7 @@ void AchievementMgr::UpdateAchievementCriteria(AchievementCriteriaTypes type, ui
         return;
     }
 
-    if (referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+    if (IsAchievementSuppressedForServiceAccount(referencePlayer))
         return;
 
     // disable for gamemasters with GM-mode enabled
@@ -2199,7 +2217,7 @@ CriteriaProgress* AchievementMgr::GetCriteriaProgress(CriteriaEntry const* entry
 
 void AchievementMgr::SetCriteriaProgress(Criteria const* criteria, uint64 changeValue, Player* referencePlayer, ProgressType ptype)
 {
-    if (referencePlayer && referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+    if (IsAchievementSuppressedForServiceAccount(referencePlayer))
         return;
 
     TC_LOG_DEBUG("achievement", "SetCriteriaProgress(%u, " UI64FMTD ") for (%s GUID: %u)",
@@ -2379,7 +2397,7 @@ void AchievementMgr::CompletedAchievement(AchievementEntry const* achievement, P
 {
     ASSERT(IsFitTypeCondition(achievement));
 
-    if (referencePlayer && referencePlayer->GetSession() && referencePlayer->GetSession()->IsBot())
+    if (IsAchievementSuppressedForServiceAccount(referencePlayer))
         return;
 
     switch (achievement->ID)
