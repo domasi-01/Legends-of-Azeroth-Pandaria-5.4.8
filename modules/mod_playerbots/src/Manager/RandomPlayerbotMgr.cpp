@@ -568,7 +568,18 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
     if (GET_PLAYERBOT_AI(bot))
             GET_PLAYERBOT_AI(bot)->Reset(true);
 
-    uint8 level = GetValue(bot, "level");
+    uint32 level = GetValue(bot, "level");
+
+    // A missing or expired level event must not down-level the bot.
+    if (!level)
+        level = bot->GetLevel();
+
+    // Death Knights must never be randomized below their heroic starting level.
+    if (bot->GetClass() == CLASS_DEATH_KNIGHT)
+        level = std::max(level, std::max(uint32(55), sWorld->getIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL)));
+
+    SetValue(bot, "level", level);
+
     BotFactory factory(bot, level);
     factory.Randomize(false);
 
