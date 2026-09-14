@@ -1813,3 +1813,56 @@ With AuctionHouseBot.Items.Misc disabled, legitimate crafted/non-vendor mounts c
 This is a Realmwalkers-specific AuctionHouseBot inventory feature rather than an upstream defect fix.
 
 Keep this feature isolated from unrelated upstream bug-fix pull requests.
+
+## RW-FIX-008 - AuctionHouseBot duplicate AddAuction call
+
+**Status:** Runtime validated
+**Classification:** Upstream defect fix
+
+### Problem
+`AuctionBotSeller::AddNewAuctions()` called `AuctionHouseObject::AddAuction()` twice for the same newly created `AuctionEntry`.
+
+The first call correctly inserted the auction into the in-memory auction map and dispatched the auction-add scripting hook. After saving the auction to the database, the same pointer was passed to `AddAuction()` a second time.
+
+Because `AuctionHouseObject::AddAuction()` performs:
+
+- insertion/update of `AuctionsMap[auction->Id]`
+- `sScriptMgr->OnAuctionAdd(this, auction)`
+
+the second call did not create a second auction record, but it unnecessarily dispatched `OnAuctionAdd()` a second time for every AuctionHouseBot-created auction.
+
+### Fix
+Removed the second duplicate `auctionHouse->AddAuction(auctionEntry);` call from `AuctionBotSeller::AddNewAuctions()`.
+
+The resulting sequence is now:
+
+1. Save the generated item.
+2. Add the item to AuctionHouseMgr.
+3. Add the auction to the AuctionHouseObject once.
+4. Save the auction to the database.
+
+### Scope
+One duplicate function call removed from:
+
+`src/server/game/AuctionHouseBot/AuctionHouseBotSeller.cpp`
+
+No AuctionHouseMgr, scripting, database schema, or configuration changes were required.
+
+### Validation
+
+- worldserver build completed successfully.
+- Production worldserver restarted successfully.
+- Active worldserver binary SHA256:
+  `cc10d51d9931a7ae30a0652240a05b363120b726964aa452909373d8d0928edf`
+- AuctionHouseBot initialized normally.
+- Auction count remained stable at 104.
+- Existing AHBot mount auctions remained intact.
+- No duplicate auction IDs were present in the database.
+- No startup or runtime errors were observed.
+- Auth and world services remained active.
+
+### Origin
+The duplicate calls were already present in the original 2023 `Add ahbot` commit (`cc9d169954`). This was not introduced by Realmwalkers local changes.
+
+### Upstream suitability
+This is a minimal upstream-friendly defect fix and should be suitable for submission independently of Realmwalkers-specific features.
