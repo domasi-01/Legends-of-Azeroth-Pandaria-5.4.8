@@ -1367,3 +1367,318 @@ Possible future work should be handled separately:
 - cleanup/removal of obsolete PremadeSpecLink configuration;
 - migration or scheduled repair of existing zero-talent bots;
 - Death Knight specialization initialization issues.
+
+---
+
+## RW-FIX-007 - Preserve Playerbot Level During Recurring Randomization
+
+### Status
+
+**Confirmed upstream defect. Patched and runtime validated.**
+
+Source commit:
+
+```text
+07d8cc6dee Playerbots: preserve level during recurring randomization
+```
+
+Validated worldserver SHA256:
+
+```text
+49308ad742f131f27968f8eb3a547df3084951c89852f3660414a16bd7bf73e9
+```
+
+### Affected Source
+
+```text
+modules/mod_playerbots/src/Manager/RandomPlayerbotMgr.cpp
+```
+
+Function:
+
+```cpp
+RandomPlayerbotMgr::Randomize(Player* bot)
+```
+
+### Summary
+
+Recurring randomization assumed every random Playerbot had a valid stored
+`level` event.
+
+The original code was:
+
+```cpp
+uint8 level = GetValue(bot, "level");
+BotFactory factory(bot, level);
+factory.Randomize(false);
+```
+
+If the `level` event was missing or expired, `GetValue(bot, "level")`
+could return zero.
+
+That zero was passed directly into `BotFactory`.
+
+`BotFactory::Prepare()` then clamps levels below 1 to 1 and calls
+`GiveLevel(newlevel)`.
+
+This allowed an existing Playerbot to be unintentionally reduced to
+level 1 during recurring randomization.
+
+Death Knights were particularly visible because they normally begin at
+level 55, but the defect was not Death-Knight-specific.
+
+### Population Evidence
+
+A database survey showed that most existing Realmwalkers random bots did
+not have a stored `level` event.
+
+Observed missing level-event counts:
+
+```text
+Class 1:  197 / 201
+Class 2:  195 / 200
+Class 3:  196 / 200
+Class 4:  195 / 200
+Class 5:  196 / 200
+Class 6:  199 / 200
+Class 7:  196 / 200
+Class 8:  195 / 200
+Class 9:  196 / 200
+Class 10: 196 / 200
+Class 11: 195 / 199
+```
+
+For Death Knights specifically, 199 of 200 bots initially lacked a
+stored `level` event.
+
+### Initial Reproduction
+
+Test character:
+
+```text
+Name:  Willena
+GUID:  11
+Class: Death Knight
+Level: 55
+```
+
+Before reproduction:
+
+```text
+Level:       55
+Talent tree: 0 0
+Talent rows: 0
+Level event: missing
+```
+
+Only Willena's `randomize` event was expired to force the normal recurring
+randomization path.
+
+The existing unpatched recurring randomization code read the missing
+level event and passed the resulting invalid value into `BotFactory`.
+
+After processing, Willena was observed at level 2 with no specialization
+or talents.
+
+The level 2 observation is consistent with the character initially being
+reduced to a very low level and subsequently gaining experience while
+online.
+
+### Death Knight Specialization Investigation
+
+The initial symptom appeared to suggest a Death Knight specialization
+problem because the existing Death Knight population had:
+
+```text
+talentTree = 0 0
+```
+
+Further investigation showed that specialization was not the underlying
+defect.
+
+`RandomizeFirst()` already contains Death Knight-specific level handling,
+and the Playerbot bracket manager also prevents Death Knights from being
+assigned levels below their heroic starting level.
+
+The recurring `Randomize()` function did not contain equivalent protection.
+
+Willena later recovered to:
+
+```text
+Level:          57
+Specialization: 252
+```
+
+Specialization ID 252 is Unholy.
+
+This demonstrated that the Death Knight specialization machinery itself
+was functional once a valid character level was available.
+
+### Upstream Confirmation
+
+The current Legends-of-Azeroth upstream branch contains the same recurring
+randomization implementation:
+
+```cpp
+uint8 level = GetValue(bot, "level");
+BotFactory factory(bot, level);
+factory.Randomize(false);
+```
+
+The upstream implementation therefore has the same missing-level failure
+mode.
+
+### Fix
+
+The recurring randomization path now:
+
+1. Reads the stored level event.
+2. Falls back to the character's current level if the event is missing or invalid.
+3. Enforces the heroic starting-level minimum for Death Knights.
+4. Persists the repaired level event.
+5. Passes the validated level into `BotFactory`.
+
+Patched code:
+
+```cpp
+uint32 level = GetValue(bot, "level");
+
+// A missing or expired level event must not down-level the bot.
+if (!level)
+    level = bot->GetLevel();
+
+// Death Knights must never be randomized below their heroic starting level.
+if (bot->GetClass() == CLASS_DEATH_KNIGHT)
+    level = std::max(level, std::max(uint32(55), sWorld->getIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL)));
+
+SetValue(bot, "level", level);
+
+BotFactory factory(bot, level);
+factory.Randomize(false);
+```
+
+The change is intentionally limited to the recurring
+`RandomPlayerbotMgr::Randomize(Player*)` path.
+
+`RandomizeFirst()`, the bracket manager, and `BotFactory` behavior were not
+modified by RW-FIX-007.
+
+### Build Validation
+
+The patched worldserver built successfully.
+
+```text
+Build result: success
+Return code:  0
+```
+
+Patched binary SHA256:
+
+```text
+49308ad742f131f27968f8eb3a547df3084951c89852f3660414a16bd7bf73e9
+```
+
+### Controlled Runtime Validation
+
+A second Death Knight was used for clean validation.
+
+Test character:
+
+```text
+Name:  Fabineri
+GUID:  22
+Class: Death Knight
+Level: 55
+```
+
+Before test:
+
+```text
+Level:           55
+Online:          yes
+Talent tree:     0 0
+Talent rows:     0
+Level event:     missing
+Randomize event: present
+```
+
+Only Fabineri's `randomize` event was expired.
+
+The worldserver was restarted into the patched binary.
+
+Verified live SHA256:
+
+```text
+49308ad742f131f27968f8eb3a547df3084951c89852f3660414a16bd7bf73e9
+```
+
+Fabineri remained at level 55 throughout processing.
+
+After normal recurring randomization:
+
+```text
+Level:          55
+Talent tree:    252 0
+Specialization: 252 (Unholy)
+Talent rows:    3
+```
+
+Created talent rows:
+
+```text
+49039
+50041
+108170
+```
+
+The missing level event was repaired and persisted:
+
+```text
+event:   level
+value:   55
+validIn: 1209600
+```
+
+The normal recurring randomization event was also recreated:
+
+```text
+event:   randomize
+validIn: 62208000
+```
+
+No kernel crash, segmentation fault, general protection fault, divide
+error, or OOM event was observed during validation.
+
+World and authentication services remained healthy.
+
+### Test Artifacts
+
+Initial Willena investigation:
+
+```text
+/srv/realmwalkers-clean/backups/rw-fix-006-dk-20260914-185558
+```
+
+RW-FIX-007 source backup:
+
+```text
+/srv/realmwalkers-clean/backups/rw-fix-007-source-20260914-190828
+```
+
+Final Fabineri runtime validation:
+
+```text
+/srv/realmwalkers-clean/backups/rw-fix-007-fabineri-20260914-191144
+```
+
+### Result
+
+RW-FIX-007 is considered **runtime validated**.
+
+The patch prevents recurring randomization from reducing bots to an
+invalid level when their stored level event is missing and additionally
+protects Death Knights from being randomized below their heroic starting
+level.
+
+This is suitable for a focused upstream issue or pull request independent
+of Realmwalkers-specific policy changes.
