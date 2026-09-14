@@ -1068,3 +1068,302 @@ This is suitable for a focused upstream issue or pull request because:
 - The fix removes invalid specialization-index lookups.
 - No Realmwalkers-specific policy or behavior is introduced.
 - The fix has been build-tested and runtime-tested.
+
+
+## RW-FIX-006 - Restore MoP Playerbot Talent Initialization
+
+### Status
+
+Confirmed upstream defect.
+
+Source fix compiled successfully and was runtime validated through the normal
+random-playerbot production path.
+
+Source commit:
+
+`53f83daf53 Playerbots: restore MoP talent initialization`
+
+Validated worldserver SHA256:
+
+`5e476881dac2272e94a568c7b30bbfee54739a85e99d08bc00d0a6673680ae91`
+
+### Affected source
+
+`modules/mod_playerbots/src/Factory/BotFactory.cpp`
+
+### Summary
+
+Playerbots were routinely running with no talents assigned.
+
+Two separate defects contributed to this:
+
+1. The shipped premade-talent configuration format is incompatible with the
+   active loader.
+2. The normal randomization path resets talents but did not rebuild them.
+
+Together these left existing random playerbots with zero saved talent rows,
+including high-level characters that should have multiple unlocked MoP talent
+tiers.
+
+### Defect 1 - Premade talent configuration is incompatible with the loader
+
+The shipped Playerbot configuration uses legacy pre-MoP style keys such as:
+
+`AiPlayerbot.PremadeSpecLink.<class>.<spec>.60`
+`AiPlayerbot.PremadeSpecLink.<class>.<spec>.65`
+`AiPlayerbot.PremadeSpecLink.<class>.<spec>.70`
+`AiPlayerbot.PremadeSpecLink.<class>.<spec>.80`
+
+The active loader instead requests:
+
+`AiPlayerbot.PremadeSpecLink.<class>.<spec>`
+
+with no level suffix.
+
+It then expects the resulting value to be a comma-separated list of numeric
+talent identifiers.
+
+No exact unsuffixed PremadeSpecLink keys exist in the shipped configuration,
+and the shipped level-suffixed values are legacy talent-tree strings rather
+than the MoP talent format expected by the loader.
+
+As a result, the active `premadeSpecLink` vectors are empty.
+
+The mismatch is inherited from the original Playerbot import and is therefore
+an upstream defect rather than a Realmwalkers configuration error.
+
+### Defect 2 - Normal randomization resets talents but never restores them
+
+`BotFactory::Randomize(bool incremental)` performs:
+
+- `Prepare()`
+- full talent reset when `incremental == false`
+- equipment/pet/randomization work
+- save
+
+Before this fix, the normal full-randomization path did not call
+`InitTalentsTree()` after resetting the character's talents.
+
+The primary random-playerbot path calls:
+
+`factory.Randomize(false)`
+
+so bots randomized through normal server operation could have all talents
+removed and never rebuilt.
+
+This explains the observed database state where random bot characters,
+including level-90 bots, contained zero rows in `character_talent`.
+
+### MoP talent model
+
+The MoP core uses `Talent.dbc` entries with the following relevant fields:
+
+- `ID`
+- `TierID`
+- `ColumnIndex`
+- `SpellID`
+- `PlayerClass`
+- `ReplacesSpell`
+
+`Player::LearnTalent(uint16 talentId)` expects the Talent.dbc `ID`.
+
+The character talent map and `character_talent` database table are keyed by
+the learned talent spell ID.
+
+Therefore talent selection must:
+
+1. choose a valid Talent.dbc record for the player's class and unlocked tier;
+2. test existing ownership using `SpellID`;
+3. pass the Talent.dbc `ID` to `Player::LearnTalent()`.
+
+A MoP character unlocks one talent tier per 15 levels:
+
+`floor(level / 15)`
+
+giving six unlocked tiers at level 90.
+
+### Fix
+
+`BotFactory::InitTalentsTree()` was rewritten to use the actual MoP
+`sTalentStore` rather than the obsolete premade-spec talent strings.
+
+The implementation:
+
+- optionally resets talents/specification;
+- selects a specialization when one is not yet selected;
+- calculates the number of unlocked talent tiers;
+- scans `sTalentStore` for talents matching:
+  - the bot's class;
+  - the current tier;
+  - a valid nonzero SpellID;
+- skips a tier if that bot already has a talent from that tier;
+- randomly selects one valid Talent.dbc entry from each unlocked tier;
+- calls `Player::LearnTalent()` with the Talent.dbc ID.
+
+The normal full-randomization path was also changed to call:
+
+`InitTalentsTree(false);`
+
+immediately after the full-reset block and before pet initialization.
+
+This ensures that normal random-playerbot randomization restores valid MoP
+talents after the reset.
+
+### Scope
+
+The fix intentionally does not attempt to optimize talents for a particular
+specialization or role.
+
+It assigns one valid class talent per unlocked MoP tier.
+
+This is a minimal recovery of functional MoP talent initialization and removes
+the dependency on incompatible legacy premade talent strings.
+
+The obsolete PremadeSpecName/PremadeSpecLink loader and configuration remain
+in place for now so this patch stays focused.
+
+### Pre-fix runtime evidence
+
+Random bot characters across all classes were observed with zero saved rows in
+`character_talent`.
+
+Examples included:
+
+- Domena - Warrior, level 21, zero talents.
+- Wistane - Monk, level 90, zero talents.
+
+The shipped configuration also contains no Monk premade talent definitions,
+making Monk a useful validation case for the new DBC-based logic.
+
+### Runtime validation - Domena
+
+Test character:
+
+- Name: Domena
+- GUID: 17
+- Class: Warrior
+- Level: 21
+- Initial specialization: 73
+- Initial saved talents: 0
+
+Only Domena's `randomize` event was expired.
+
+The worldserver was restarted once so the Playerbot event cache would reload
+the modified scheduler row.
+
+The normal `RandomPlayerbotMgr` processing path then randomized Domena.
+
+Result:
+
+- Final level: 21
+- Final specialization: 71
+- Saved talent rows: 1
+- Learned talent spell: 103828
+- Spec column: 0
+
+Expected talent count:
+
+`floor(21 / 15) = 1`
+
+Observed talent count:
+
+`1`
+
+The randomization event was automatically recreated by normal server logic
+with:
+
+`validIn = 62208000`
+
+confirming that the standard randomization path completed.
+
+Runtime artifact directory:
+
+`/srv/realmwalkers-clean/backups/rw-fix-006-domena-20260914-182515`
+
+### Runtime validation - Wistane
+
+Test character:
+
+- Name: Wistane
+- GUID: 48
+- Class: Monk
+- Level: 90
+- Specialization: 270
+- Initial saved talents: 0
+
+Only Wistane's `randomize` event was expired.
+
+The worldserver was restarted once so the Playerbot event cache would reload
+the modified scheduler row.
+
+The normal `RandomPlayerbotMgr` processing path then randomized Wistane.
+
+Result:
+
+- Final level: 90
+- Final specialization: 270
+- Saved talent rows: 6
+
+Learned talent spells:
+
+- 115173
+- 119392
+- 121817
+- 122278
+- 123904
+- 123986
+
+Expected talent count:
+
+`floor(90 / 15) = 6`
+
+Observed talent count:
+
+`6`
+
+The randomization event was automatically recreated by normal server logic
+with:
+
+`validIn = 62208000`
+
+confirming that the normal randomization path completed.
+
+Runtime artifact directory:
+
+`/srv/realmwalkers-clean/backups/rw-fix-006-monk-20260914-183244`
+
+### Runtime health
+
+During both controlled validation tests:
+
+- worldserver remained healthy;
+- authserver remained healthy;
+- world port 8085 remained available;
+- auth port 3724 remained available;
+- no worldserver segmentation fault was recorded;
+- no general protection fault was recorded;
+- no divide error was recorded;
+- no OOM event was recorded.
+
+The live worldserver executable exactly matched the validated build:
+
+`5e476881dac2272e94a568c7b30bbfee54739a85e99d08bc00d0a6673680ae91`
+
+### Upstream suitability
+
+This is suitable for a focused upstream report or pull request.
+
+The underlying failures exist in the inherited Playerbot source/configuration:
+
+- obsolete premade talent data does not match the active loader;
+- the normal randomization path resets talents without restoring them.
+
+The Realmwalkers patch is deliberately limited to restoring functional MoP
+talent initialization through the existing Talent.dbc and player APIs.
+
+Possible future work should be handled separately:
+
+- specialization-aware talent weighting;
+- cleanup/removal of obsolete PremadeSpecLink configuration;
+- migration or scheduled repair of existing zero-talent bots;
+- Death Knight specialization initialization issues.
