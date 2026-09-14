@@ -907,3 +907,164 @@ should remain separate from Realmwalkers-specific policy changes such as
 Playerbot achievement suppression.
 
 ---
+## RW-FIX-005 - Playerbots premade specialization array bounds
+
+### Status
+
+Confirmed upstream defect.
+
+Source fix:
+`b4977d6de9 Playerbots: fix premade spec array bounds`
+
+Runtime validated on Realmwalkers MoP 5.4.8.
+
+### Component
+
+Playerbots
+
+Affected files:
+
+- `modules/mod_playerbots/src/Utils/PlayerbotAIConfig.cpp`
+- `modules/mod_playerbots/src/Utils/PlayerbotAIConfig.h`
+
+### Problem
+
+During Playerbots initialization, the premade specialization loader iterated
+through `MAX_SPECIALIZATIONS` entries:
+
+    for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS; ++spec)
+
+For this MoP tree, `MAX_SPECIALIZATIONS` is 5.
+
+However, the destination Playerbot arrays are declared with only
+`MAX_SPECIALIZATIONS - 1` elements:
+
+    std::string premadeSpecName[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
+    std::vector<uint16> premadeSpecLink[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
+
+Therefore the arrays contain four valid specialization indexes: 0 through 3.
+
+The loader incorrectly attempted to process specialization index 4.
+
+### Evidence
+
+The defect exists unchanged in `upstream/master`.
+
+`git blame` traces the loader loop to the original Playerbot module addition:
+
+`dbcb9e52af [Module] Add Playerbot (#389)`
+
+The Realmwalkers branch had no local modification to either affected file
+before RW-FIX-005.
+
+`PlayerBotSpec::GetSpectab()` returns specialization indexes 0 through 3,
+with Druid Restoration using index 3.
+
+`BotFactory::InitTalentsTree()` uses that returned value directly to access:
+
+    sPlayerbotAIConfig->premadeSpecLink[bot->GetClass()][spec_tab]
+
+Before the fix, startup attempted invalid index-4 configuration lookups.
+
+If an index-4 configuration entry were populated, the loader could also
+write beyond the bounds of the destination Playerbot arrays.
+
+### Fix
+
+Changed:
+
+    for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS; ++spec)
+
+to:
+
+    for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS - 1; ++spec)
+
+This is intentionally a one-line correction. It does not change array
+layout, specialization mapping, talent selection logic, or configuration
+format.
+
+### Source backup
+
+Pre-change source backup:
+
+`/srv/realmwalkers-clean/backups/rw-fix-005-source-20260914-174658`
+
+### Build validation
+
+Build completed successfully.
+
+Build return code:
+
+`0`
+
+Build time:
+
+`49 seconds`
+
+Patched worldserver SHA256:
+
+`1ef14f88fb24a29cc516e07ff6b364381fa70e4fafb4d466e474011e7f7bb0f8`
+
+### Runtime validation
+
+The patched worldserver was started under the normal Realmwalkers systemd
+service.
+
+Validated running PID:
+
+`3602901`
+
+The checksum of `/proc/3602901/exe` matched the patched on-disk binary:
+
+`1ef14f88fb24a29cc516e07ff6b364381fa70e4fafb4d466e474011e7f7bb0f8`
+
+Worldserver startup succeeded.
+
+Playerbots initialized successfully with:
+
+- 200 random bot accounts
+- 2200 bot characters available
+
+The worldserver resumed listening on TCP port 8085.
+
+The authserver remained listening on TCP port 3724.
+
+No worldserver kernel crash, segmentation fault, general protection fault,
+or divide error occurred during the controlled restart.
+
+After the patched startup:
+
+- No `PremadeSpecName.*.4` or `PremadeSpecLink.*.4` warnings were present.
+- Playerbots initialized normally.
+- No Playerbots configuration-load failure occurred.
+
+### Separate Monk configuration issue
+
+Warnings remain for:
+
+    AiPlayerbot.PremadeSpecName.10.0
+    AiPlayerbot.PremadeSpecName.10.1
+    AiPlayerbot.PremadeSpecName.10.2
+    AiPlayerbot.PremadeSpecName.10.3
+
+Class 10 is Monk.
+
+This is intentionally not addressed by RW-FIX-005.
+
+The Playerbot source contains explicit support for Monk Brewmaster,
+Windwalker, and Mistweaver specializations, but the shipped premade
+specialization configuration contains no Monk definitions.
+
+That configuration issue requires separate investigation and must not be
+combined with this bounds-correction patch.
+
+### Upstream suitability
+
+This is suitable for a focused upstream issue or pull request because:
+
+- The defect exists in upstream source.
+- The destination array bounds and loader bounds are inconsistent.
+- The fix is one line.
+- The fix removes invalid specialization-index lookups.
+- No Realmwalkers-specific policy or behavior is introduced.
+- The fix has been build-tested and runtime-tested.
