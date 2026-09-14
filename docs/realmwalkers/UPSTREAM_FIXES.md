@@ -1682,3 +1682,64 @@ level.
 
 This is suitable for a focused upstream issue or pull request independent
 of Realmwalkers-specific policy changes.
+
+### RW-FEATURE-001 extension: AHBot service-account achievement suppression
+
+**Classification:** Realmwalkers local policy feature; not an upstream Legends-of-Azeroth defect.
+
+Realmwalkers already suppresses achievement progress for Playerbot sessions. The policy was extended so the dedicated AuctionHouseBot service account also cannot earn character-level or account-level achievements.
+
+#### Implementation
+
+- Added `AuctionHouseBot.h` to `AchievementMgr.cpp`.
+- Added `IsAchievementSuppressedForServiceAccount(Player const*)`.
+- The helper suppresses achievements when:
+  - the player session reports `IsBot()`, or
+  - the session account ID matches the configured nonzero `AuctionHouseBot.Account`.
+- The helper is used by:
+  - `AchievementMgr::UpdateAchievementCriteria(...)`
+  - `AchievementMgr::SetCriteriaProgress(...)`
+  - `AchievementMgr::CompletedAchievement(...)`
+- This deliberately uses the configured AHBot account ID rather than `_AHBotCharacters`, so every character on the service account is protected regardless of AHBot seller/buyer state.
+
+#### Production configuration
+
+- `AuctionHouseBot.Account = 205`
+- `AuctionHouseBot.Seller.Enabled = 0`
+- `AuctionHouseBot.Buyer.Enabled = 0`
+- Account 205 username: `AHBOT`
+- AHBOT has no GM access.
+
+#### Runtime validation
+
+- Validated worldserver SHA256: `d4c86184c4e71f58900c0effdcf18865abebb31a5e35f626622f54da16e7fc08`
+- AHBOT characters:
+  - `Ahbota`, GUID 2208
+  - `Ahboth`, GUID 2209
+- Initial AHBOT baseline:
+  - character completed achievements: 0
+  - character criteria rows: 0
+  - account completed achievements: 0
+  - account criteria rows: 0
+- `Ahbota` was played normally from level 1 through level 4.
+- After gameplay, both AHBOT characters still had:
+  - 0 completed achievements
+  - 0 criteria progress rows
+- Account 205 still had:
+  - 0 account achievements
+  - 0 account criteria progress rows
+
+#### Human-player regression validation
+
+- Human test character: `Artemis`, GUID 2207, account 204.
+- Artemis advanced from level 6 to level 7.
+- Character criteria rows increased from 49 to 50.
+- Account criteria 5218 increased from 6 to 7.
+- Account criteria 20677 increased from 6 to 7.
+- This confirms ordinary human achievement tracking remains functional while AHBOT achievement tracking is suppressed.
+
+#### Source commit
+
+- `3e36b78579 Realmwalkers: suppress achievements for AHBot account`
+
+**Status:** Runtime validated.
