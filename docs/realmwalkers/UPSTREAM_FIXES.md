@@ -462,3 +462,164 @@ This is suitable for a focused Legends-of-Azeroth issue/PR because the defect
 is contained entirely within the Playerbots WorldSession constructor calls.
 
 ---
+
+# RW-FEATURE-001
+## Exclude Playerbots from achievement tracking
+
+### Status
+
+Realmwalkers-specific feature - implemented and runtime-validated.
+
+### Component
+
+Achievements / Playerbots
+
+### File
+
+`src/server/game/Achievements/AchievementMgr.cpp`
+
+### Purpose
+
+Realmwalkers uses Playerbots to populate and simulate activity in the game world.
+
+These automated characters must not participate in achievement tracking because
+their activity could contaminate player-facing achievement statistics, portal
+statistics, rankings, leaderboards, or other systems intended to represent
+human player activity.
+
+### Implementation
+
+Achievement processing now rejects players whose WorldSession is explicitly
+identified as a bot through:
+
+`WorldSession::IsBot()`
+
+Three guards are applied in `AchievementMgr.cpp`:
+
+1. `AchievementMgr::UpdateAchievementCriteria(...)`
+   - Source line at validation: approximately 1485
+   - Prevents bot activity from entering normal achievement criteria processing.
+
+2. `AchievementMgr::SetCriteriaProgress(...)`
+   - Source line at validation: approximately 2202
+   - Prevents bot sessions from creating or modifying criteria progress.
+
+3. `AchievementMgr::CompletedAchievement(...)`
+   - Source line at validation: approximately 2382
+   - Prevents bot sessions from completing achievements.
+
+Each guard returns only when the supplied player has a WorldSession for which:
+
+`IsBot() == true`
+
+Human player sessions continue through the existing achievement logic unchanged.
+
+### Dependency
+
+This feature depends on Playerbot sessions being correctly identified by
+`WorldSession::IsBot()`.
+
+During development, testing of this feature exposed the upstream Playerbots
+WorldSession constructor defect documented separately as:
+
+`RW-FIX-004`
+
+RW-FIX-004 corrected both affected Playerbot WorldSession construction sites so
+Playerbots now explicitly use:
+
+`isBot = true`
+
+### Runtime Validation
+
+Validation was performed against the fresh Realmwalkers MoP 5.4.8 environment.
+
+Playerbot population during testing:
+
+- 200 RNDBOT accounts
+- 2200 RNDBOT characters
+- 50 bot characters online
+- 5 bot accounts represented by the online characters
+
+The achievement database was classified by account ownership using the
+`RNDBOT[0-9]+` account naming scheme.
+
+With active Playerbots running:
+
+- bot character completed achievements: 0
+- bot character achievement progress rows: 0
+- bot account completed achievements: 0
+- bot account achievement progress rows: 0
+
+These values remained zero while Playerbots continued operating.
+
+### Human Player Regression Test
+
+Human achievement processing was tested using:
+
+- Account: DOMASI
+- Character: Artemis
+- Character GUID: 2207
+- Account ID: 204
+
+Before the human activity test:
+
+- human character achievement progress rows: 39
+- human account achievement progress rows: 2
+
+After normal player activity, multiple Artemis achievement criteria counters
+advanced and additional criteria progress was recorded.
+
+Examples observed during validation included increases in criteria:
+
+- 3631
+- 4092
+- 4224
+- 4944
+- 4946
+- 4948
+- 5212
+- 5218
+- 5230
+- 5313
+- 5314
+- 5315
+- 5316
+- 5317
+- 5372
+- 5373
+- 5529
+- 5531
+- 16825
+- 20735
+
+Account-level achievement criteria for account 204 also continued to update.
+
+During the same test, all four Playerbot achievement categories remained zero.
+
+### Validation Result
+
+RW-FEATURE-001 is considered runtime-validated.
+
+The implementation successfully:
+
+- prevents Playerbots from creating character achievement progress
+- prevents Playerbots from completing character achievements
+- prevents Playerbots from creating account achievement progress
+- prevents Playerbots from completing account achievements
+- preserves normal achievement processing for human players
+
+No regression to human achievement progress was observed.
+
+### Upstream Reporting
+
+RW-FEATURE-001 represents a Realmwalkers policy decision rather than a confirmed
+general Legends-of-Azeroth defect.
+
+The achievement-suppression guards should therefore remain a Realmwalkers-local
+feature unless the upstream maintainers specifically want configurable
+Playerbot achievement suppression.
+
+The separate WorldSession bot-identification defect discovered while testing
+this feature is tracked as RW-FIX-004 and is appropriate for upstream reporting.
+
+---
