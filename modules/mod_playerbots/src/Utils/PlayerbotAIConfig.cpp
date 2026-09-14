@@ -184,7 +184,7 @@ bool PlayerbotAIConfig::Initialize()
     TC_LOG_INFO("server.loading", "---------------------------------------");
     for (uint32 cls = 1; cls < MAX_CLASSES; ++cls)
     {
-        for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS; ++spec)
+        for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS - 1; ++spec)
         {
             std::ostringstream os;
             os << "AiPlayerbot.PremadeSpecName." << cls << "." << spec;
