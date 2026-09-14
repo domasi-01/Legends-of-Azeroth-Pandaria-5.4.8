@@ -159,6 +159,7 @@ void BotFactory::Randomize(bool incremental)
         }
     }
 
+    InitTalentsTree(false);
     InitPet();
  
     bot->SetMoney(urand(level * 100000, level * 5 * 100000));
@@ -303,51 +304,13 @@ void BotFactory::InitPet()
 #include <fstream>
 void BotFactory::InitTalentsTree(bool reset)
 {
-    /*std::map<uint32, std::list<const TalentEntry*>> talents_dbc;
-    for (auto entry = sTalentStore.begin(); entry != sTalentStore.end(); ++entry)
-    {
-        if (talents_dbc.find(entry->PlayerClass) == talents_dbc.end())
-            talents_dbc[entry->PlayerClass] = std::list<const TalentEntry*>();
-        talents_dbc[entry->PlayerClass].push_back(*entry);
-    }
-
-    for (auto& ref : talents_dbc)
-    {
-        ref.second.sort([](const TalentEntry* a, const TalentEntry* b)
-        {
-            return (a->Row < b->Row) || (a->Row == b->Row && a->Col < b->Col);
-        });
-    }
-
-    std::ofstream os("./talent_export.txt", std::ios::app);
-    for (const auto& ref : talents_dbc)
-    {
-        auto classe = ClassToString((Classes)ref.first);
-        os << classe << ":\n";
-        uint32 currentRow = 0;
-        for (const auto& tal : ref.second)
-        {
-            if (tal->Row != currentRow)
-            {
-                currentRow = tal->Row;
-                os << "\n";
-            }
-            os << tal->TalentID << "\t";
-        }
-        os << "\n";
-    }
-    os.close();*/
-
-    // -- reset spec in case we down level
+    // Reset talents/spec in case the bot was down-leveled.
     if (reset)
-    {
         bot->ResetTalents(true, true, true);
-    }
-    
-    // if no spec then pick one random (need to change that to balance)
+
+    // Select a specialization if the bot does not have one yet.
     if (bot->GetSpecialization() == Specializations::SPEC_NONE)
     {
-        // -- Select spec
         if (bot->GetLevel() >= 10)
         {
             uint32 tab = std::rand() % 3;
@@ -358,35 +321,43 @@ void BotFactory::InitTalentsTree(bool reset)
         }
     }
 
-    WorldPacket p(CMSG_LEARN_TALENT);
-    uint32 alreadyUsedPoints = bot->GetUsedTalentCount();
-    uint8 spec_tab = PlayerBotSpec::GetSpectab(bot);
-    uint32 availablepoints = bot->CalculateTalentsPoints() - bot->GetUsedTalentCount();
-    uint32 learnCount = 0;
+    uint32 unlockedTiers = bot->CalculateTalentsPoints();
+    if (!unlockedTiers)
+        return;
 
-    if (!availablepoints || spec_tab == 99) return;
-
-    const std::vector<uint16>& talents = sPlayerbotAIConfig->premadeSpecLink[bot->GetClass()][spec_tab];
-    if (talents.empty()) return;
-
-    
-    std::vector<uint16> talent_to_learn;
-    for (size_t i = alreadyUsedPoints; i < talents.size() && availablepoints > 0; ++i)
+    for (uint32 tier = 0; tier < unlockedTiers; ++tier)
     {
-        uint16 talentId = talents[i];
-        if (!bot->HasTalent(talentId, bot->GetActiveSpec()))
+        bool tierAlreadySelected = false;
+        std::vector<uint16> choices;
+
+        for (TalentEntry const* talent : sTalentStore)
         {
-            learnCount++;
-            talent_to_learn.push_back(talentId);
-            availablepoints--;
+            if (!talent)
+                continue;
+
+            if (talent->PlayerClass != bot->GetClass())
+                continue;
+
+            if (talent->TierID != tier)
+                continue;
+
+            if (!talent->SpellID)
+                continue;
+
+            if (bot->HasTalent(talent->SpellID, bot->GetActiveSpec()))
+            {
+                tierAlreadySelected = true;
+                break;
+            }
+
+            choices.push_back(uint16(talent->ID));
         }
-    }
-    if (learnCount > 0)
-    {
-        p.WriteBits(learnCount, 23);
-        for (const auto& c : talent_to_learn)
-            p << c;
-        bot->GetSession()->HandleLearnTalentOpcode(p);
+
+        if (tierAlreadySelected || choices.empty())
+            continue;
+
+        uint16 talentId = choices[std::rand() % choices.size()];
+        bot->LearnTalent(talentId);
     }
 }
 
