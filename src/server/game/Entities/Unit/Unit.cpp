@@ -13695,6 +13695,12 @@ void Unit::AddToWorld()
     RebuildTerrainSwaps();
 }
 
+void Unit::RemoveAllFollowers()
+{
+    while (!_followers.empty())
+        (*_followers.begin())->SetTarget(nullptr);
+}
+
 void Unit::RemoveFromWorld()
 {
     // cleanup
@@ -13724,7 +13730,7 @@ void Unit::RemoveFromWorld()
         RemoveAllControlled();
 
         RemoveAreaAurasDueToLeaveWorld();
-
+        RemoveAllFollowers();
         if (!GetCharmerGUID().IsEmpty())
         {
             TC_LOG_FATAL("entities.unit", "Unit %u has charmer guid when removed from world", GetEntry());
