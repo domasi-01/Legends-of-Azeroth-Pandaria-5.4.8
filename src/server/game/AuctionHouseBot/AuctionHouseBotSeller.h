@@ -27,6 +27,7 @@ struct ItemToSell
 {
     uint32 Color;
     uint32 Itemclass;
+    bool IsMount = false;
 };
 
 typedef std::vector<ItemToSell> ItemsToSellArray;
@@ -89,6 +90,19 @@ public:
     }
     uint32 GetMissedItemsPerClass(AuctionQuality quality, ItemClass itemClass) const { return _itemInfo[quality][itemClass].MissItems; }
 
+    void SetMountAmount(AuctionQuality quality, uint32 amount) { _mountInfo[quality].AmountOfItems = amount; }
+    uint32 GetMountAmount(AuctionQuality quality) const { return _mountInfo[quality].AmountOfItems; }
+
+    void SetMissedMountItems(AuctionQuality quality, uint32 found)
+    {
+        if (_mountInfo[quality].AmountOfItems > found)
+            _mountInfo[quality].MissItems = _mountInfo[quality].AmountOfItems - found;
+        else
+            _mountInfo[quality].MissItems = 0;
+    }
+
+    uint32 GetMissedMountItems(AuctionQuality quality) const { return _mountInfo[quality].MissItems; }
+
     // Data for every quality of item
     void SetItemsAmountPerQuality(AuctionQuality quality, uint32 cnt) { _itemSharedQualityInfo[quality].AmountOfItems = cnt; }
     uint32 GetItemsAmountPerQuality(AuctionQuality quality) const { return _itemSharedQualityInfo[quality].AmountOfItems; }
@@ -109,6 +123,7 @@ private:
     uint32 _maxTime;
 
     SellerItemInfo _itemInfo[MAX_AUCTION_QUALITY][MAX_ITEM_CLASS];
+    SellerItemInfo _mountInfo[MAX_AUCTION_QUALITY];
 
     SellerItemQualitySharedInfo _itemSharedQualityInfo[MAX_ITEM_QUALITY];
     SellerItemClassSharedInfo _itemSharedClassInfo[MAX_ITEM_CLASS];
@@ -138,10 +153,11 @@ private:
     SellerConfiguration _houseConfig[MAX_AUCTION_HOUSE_TYPE];
 
     ItemPool _itemPool[MAX_AUCTION_QUALITY][MAX_ITEM_CLASS];
+    ItemPool _mountPool[MAX_AUCTION_QUALITY];
 
     void LoadSellerValues(SellerConfiguration& config);
     uint32 SetStat(SellerConfiguration& config);
-    bool GetItemsToSell(SellerConfiguration& config, ItemsToSellArray& itemsToSellArray, AllItemsArray const& addedItem);
+    bool GetItemsToSell(SellerConfiguration& config, ItemsToSellArray& itemsToSellArray, AllItemsArray const& addedItem, std::vector<uint32> const& addedMounts);
     void SetPricesOfItem(ItemTemplate const* itemProto, SellerConfiguration& config, uint32& buyp, uint32& bidp, uint32 stackcnt);
     uint32 GetStackSizeForItem(ItemTemplate const* itemProto, SellerConfiguration& config) const;
     void LoadItemsQuantity(SellerConfiguration& config);

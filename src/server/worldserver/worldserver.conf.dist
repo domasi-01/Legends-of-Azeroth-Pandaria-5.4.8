@@ -3209,6 +3209,7 @@ AuctionHouseBot.Items.Amount.Yellow = 0
 #                    Quest: 1
 #                    Key: 1
 #                    Misc: 5
+#                    Mount: 9
 #                    Glyph: 3
 
 AuctionHouseBot.Class.Consumable = 6
@@ -3225,6 +3226,7 @@ AuctionHouseBot.Class.Quiver = 1
 AuctionHouseBot.Class.Quest = 1
 AuctionHouseBot.Class.Key = 1
 AuctionHouseBot.Class.Misc = 5
+AuctionHouseBot.Class.Mount = 9
 AuctionHouseBot.Class.Glyph = 3
 
 #

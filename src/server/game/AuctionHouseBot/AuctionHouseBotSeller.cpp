@@ -226,8 +226,14 @@ bool AuctionBotSeller::Initialize()
         {
             bool const isVendorItem = npcItems.count(itemId) > 0;
             bool const isLootItem = lootItems.count(itemId) > 0;
+            bool const isMount =
+                prototype->GetClass() == ITEM_CLASS_MISCELLANEOUS &&
+                prototype->GetSubClass() == ITEM_SUBCLASS_JUNK_MOUNT;
 
-            if (!isLootItem && !isVendorItem)
+            // Realmwalkers: allow otherwise-valid mounts to proceed through the
+            // normal filter pipeline even when generic non-vendor/non-loot items
+            // are disabled.
+            if (!isMount && !isLootItem && !isVendorItem)
                 continue;
         }
 
@@ -342,7 +348,12 @@ bool AuctionBotSeller::Initialize()
             }
         }
 
-        _itemPool[prototype->GetQuality()][prototype->GetClass()].push_back(itemId);
+        if (prototype->GetClass() == ITEM_CLASS_MISCELLANEOUS &&
+            prototype->GetSubClass() == ITEM_SUBCLASS_JUNK_MOUNT)
+            _mountPool[prototype->GetQuality()].push_back(itemId);
+        else
+            _itemPool[prototype->GetQuality()][prototype->GetClass()].push_back(itemId);
+
         ++itemsAdded;
     }
 
@@ -458,6 +469,9 @@ void AuctionBotSeller::LoadItemsQuantity(SellerConfiguration& config)
 
             totalPrioPerQuality[j] += getPriorityForClass(i);
         }
+
+        if (!_mountPool[j].empty())
+            totalPrioPerQuality[j] += sAuctionBotConfig->GetConfig(CONFIG_AHBOT_CLASS_MOUNT_PRIORITY);
     }
 
     for (uint32 j = 0; j < MAX_AUCTION_QUALITY; ++j)
@@ -475,9 +489,16 @@ void AuctionBotSeller::LoadItemsQuantity(SellerConfiguration& config)
             uint32 weightedAmount = std::lroundf(classPrio / float(totalPrioPerQuality[j]) * qualityAmount);
             config.SetItemsAmountPerClass(AuctionQuality(j), ItemClass(i), weightedAmount);
         }
+
+        uint32 mountPrio = _mountPool[j].empty()
+            ? 0
+            : sAuctionBotConfig->GetConfig(CONFIG_AHBOT_CLASS_MOUNT_PRIORITY);
+
+        uint32 mountAmount = std::lroundf(mountPrio / float(totalPrioPerQuality[j]) * qualityAmount);
+        config.SetMountAmount(AuctionQuality(j), mountAmount);
     }
 
-    // do some assert checking, GetItemAmount must always return 0 if selected _itemPool is empty
+    // do some assert checking, GetItemAmount must always return 0 if selected pool is empty
     for (uint32 j = 0; j < MAX_AUCTION_QUALITY; ++j)
     {
         for (uint32 i = 0; i < MAX_ITEM_CLASS; ++i)
@@ -485,6 +506,9 @@ void AuctionBotSeller::LoadItemsQuantity(SellerConfiguration& config)
             if (_itemPool[j][i].empty())
                 ASSERT(config.GetItemsAmountPerClass(AuctionQuality(j), ItemClass(i)) == 0);
         }
+
+        if (_mountPool[j].empty())
+            ASSERT(config.GetMountAmount(AuctionQuality(j)) == 0);
     }
 }
 
@@ -527,6 +551,7 @@ void AuctionBotSeller::LoadSellerValues(SellerConfiguration& config)
 uint32 AuctionBotSeller::SetStat(SellerConfiguration& config)
 {
     AllItemsArray itemsSaved(MAX_AUCTION_QUALITY, std::vector<uint32>(MAX_ITEM_CLASS));
+    std::vector<uint32> mountsSaved(MAX_AUCTION_QUALITY);
 
     AuctionHouseObject* auctionHouse = sAuctionMgr->GetAuctionsMap(config.GetHouseType());
     for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionHouse->GetAuctionsBegin(); itr != auctionHouse->GetAuctionsEnd(); ++itr)
@@ -537,8 +562,16 @@ uint32 AuctionBotSeller::SetStat(SellerConfiguration& config)
         {
             ItemTemplate const* prototype = item->GetTemplate();
             if (prototype)
+            {
                 if (!auctionEntry->owner || sAuctionBotConfig->IsBotChar(auctionEntry->owner)) // Add only ahbot items
-                    ++itemsSaved[prototype->GetQuality()][prototype->GetClass()];
+                {
+                    if (prototype->GetClass() == ITEM_CLASS_MISCELLANEOUS &&
+                        prototype->GetSubClass() == ITEM_SUBCLASS_JUNK_MOUNT)
+                        ++mountsSaved[prototype->GetQuality()];
+                    else
+                        ++itemsSaved[prototype->GetQuality()][prototype->GetClass()];
+                }
+            }
         }
     }
 
@@ -550,6 +583,9 @@ uint32 AuctionBotSeller::SetStat(SellerConfiguration& config)
             config.SetMissedItemsPerClass((AuctionQuality)j, (ItemClass)i, itemsSaved[j][i]);
             count += config.GetMissedItemsPerClass((AuctionQuality)j, (ItemClass)i);
         }
+
+        config.SetMissedMountItems(AuctionQuality(j), mountsSaved[j]);
+        count += config.GetMissedMountItems(AuctionQuality(j));
     }
 
     TC_LOG_DEBUG("ahbot", "AHBot: Missed Item       \tGray\tWhite\tGreen\tBlue\tPurple\tOrange\tYellow");
@@ -564,13 +600,27 @@ uint32 AuctionBotSeller::SetStat(SellerConfiguration& config)
             config.GetMissedItemsPerClass(AUCTION_QUALITY_ORANGE, (ItemClass)i),
             config.GetMissedItemsPerClass(AUCTION_QUALITY_YELLOW, (ItemClass)i));
     }
+
+    TC_LOG_DEBUG("ahbot", "AHBot: Mount Missed      \t%u\t%u\t%u\t%u\t%u\t%u\t%u",
+        config.GetMissedMountItems(AUCTION_QUALITY_GRAY),
+        config.GetMissedMountItems(AUCTION_QUALITY_WHITE),
+        config.GetMissedMountItems(AUCTION_QUALITY_GREEN),
+        config.GetMissedMountItems(AUCTION_QUALITY_BLUE),
+        config.GetMissedMountItems(AUCTION_QUALITY_PURPLE),
+        config.GetMissedMountItems(AUCTION_QUALITY_ORANGE),
+        config.GetMissedMountItems(AUCTION_QUALITY_YELLOW));
+
     config.LastMissedItem = count;
 
     return count;
 }
 
 // getRandomArray is used to make viable the possibility to add any of missed item in place of first one to last one.
-bool AuctionBotSeller::GetItemsToSell(SellerConfiguration& config, ItemsToSellArray& itemsToSellArray, AllItemsArray const& addedItem)
+bool AuctionBotSeller::GetItemsToSell(
+    SellerConfiguration& config,
+    ItemsToSellArray& itemsToSellArray,
+    AllItemsArray const& addedItem,
+    std::vector<uint32> const& addedMounts)
 {
     itemsToSellArray.clear();
     bool found = false;
@@ -588,6 +638,16 @@ bool AuctionBotSeller::GetItemsToSell(SellerConfiguration& config, ItemsToSellAr
                 itemsToSellArray.emplace_back(std::move(miss_item));
                 found = true;
             }
+        }
+
+        if (config.GetMissedMountItems(AuctionQuality(j)) > addedMounts[j])
+        {
+            ItemToSell mountItem;
+            mountItem.Color = j;
+            mountItem.Itemclass = ITEM_CLASS_MISCELLANEOUS;
+            mountItem.IsMount = true;
+            itemsToSellArray.emplace_back(std::move(mountItem));
+            found = true;
         }
     }
 
@@ -854,19 +914,29 @@ void AuctionBotSeller::AddNewAuctions(SellerConfiguration& config)
 
     ItemsToSellArray itemsToSell;
     AllItemsArray allItems(MAX_AUCTION_QUALITY, std::vector<uint32>(MAX_ITEM_CLASS));
+    std::vector<uint32> addedMounts(MAX_AUCTION_QUALITY);
+
     // Main loop
     // getRandomArray will give what categories of items should be added (return true if there is at least 1 items missed)
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-    while (GetItemsToSell(config, itemsToSell, allItems) && items > 0)
+    while (GetItemsToSell(config, itemsToSell, allItems, addedMounts) && items > 0)
     {
         --items;
 
         // Select random position from missed items table
         ItemToSell const& sellItem = Trinity::Containers::SelectRandomContainerElement(itemsToSell);
 
-        // Set itemId with random item ID for selected categories and color, from _itemPool table
-        uint32 itemId = Trinity::Containers::SelectRandomContainerElement(_itemPool[sellItem.Color][sellItem.Itemclass]);
-        ++allItems[sellItem.Color][sellItem.Itemclass]; // Helper table to avoid rescan from DB in this loop. (has we add item in random orders)
+        uint32 itemId;
+        if (sellItem.IsMount)
+        {
+            itemId = Trinity::Containers::SelectRandomContainerElement(_mountPool[sellItem.Color]);
+            ++addedMounts[sellItem.Color];
+        }
+        else
+        {
+            itemId = Trinity::Containers::SelectRandomContainerElement(_itemPool[sellItem.Color][sellItem.Itemclass]);
+            ++allItems[sellItem.Color][sellItem.Itemclass]; // Helper table to avoid rescan from DB in this loop.
+        }
 
         if (!itemId)
         {
