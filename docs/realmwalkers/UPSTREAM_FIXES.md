@@ -1866,3 +1866,110 @@ The duplicate calls were already present in the original 2023 `Add ahbot` commit
 
 ### Upstream suitability
 This is a minimal upstream-friendly defect fix and should be suitable for submission independently of Realmwalkers-specific features.
+
+---
+
+## RW-FIX-009 - Quest 8488 Unexpected Results
+
+**Status:** Runtime validated
+**Classification:** Upstream defect fix
+
+### Problem
+
+Quest 8488, `Unexpected Results`, in Eversong Woods did not complete
+correctly during the Apprentice Mirveda Scourge ambush.
+
+Several independent problems were identified:
+
+1. Mirveda's interaction objective was stored as MONSTER instead of TALKTO.
+2. SmartScript could execute linked actions twice because of a missing `break` in `ProcessEvent()`.
+3. `SmartAI::JustAppeared()` could clear an already-active escort state, breaking summoned waypoint movement.
+4. The quest script counted despawns instead of deaths and directly forced quest completion.
+
+### Source Fix
+
+Source commit:
+
+```text
+f2dec0ccd6 RW-FIX-009: repair Unexpected Results quest 8488
+```
+
+Affected files:
+
+```text
+src/server/game/AI/SmartScripts/SmartAI.cpp
+src/server/game/AI/SmartScripts/SmartScript.cpp
+src/server/scripts/EasternKingdoms/zone_eversong_woods.cpp
+```
+
+#### SmartScript event processing
+
+Added the missing `break` after the no-parameter event-group `ProcessAction()` call in `SmartScript::ProcessEvent()`.
+
+This prevents fall-through and double execution of linked actions.
+
+#### SmartAI escort state
+
+Changed `SmartAI::JustAppeared()` so it does not clear `SMART_ESCORT_ESCORTING` when a summon has already entered escort/path movement.
+
+#### Apprentice Mirveda quest script
+
+The quest-specific script now:
+
+- grants TALKTO credit when the player interacts with Mirveda while 8488 is incomplete;
+- suppresses the empty gossip window during that interaction;
+- does not force newly summoned attackers to immediately attack Mirveda;
+- tracks deaths of the three encounter attackers instead of despawns;
+- fails quest 8488 if Mirveda dies;
+- uses `GroupEventHappens()` after all three attackers are killed instead of directly forcing `CompleteQuest()`.
+
+### Database Fix
+
+Quest objective 289859 was incorrectly stored as `Type = 0 (MONSTER)`.
+
+It must use `Type = 3 (TALKTO)` for Apprentice Mirveda (15402).
+
+The reproducible SQL is preserved at:
+
+```text
+/srv/realmwalkers-mop/local-changes/sql/quest-8488-unexpected-results.sql
+```
+
+### SmartAI Database Validation
+
+Temporary `SMART_ACTION_WP_STOP` actions were tested during diagnosis. They are **not required** after the core fixes.
+
+The original SmartAI rows for Angershade (15656) and Gharsul the Remorseless (15958) were restored before final validation.
+
+### Runtime Validation
+
+Quest 8488 was tested from a clean quest state after rebuilding and restarting the production worldserver.
+
+Confirmed:
+
+- Mirveda interaction grants the optional objective credit.
+- No empty gossip window appears.
+- Mirveda speaks her existing encounter dialogue.
+- Gharsul and both Angershades follow their intended paths.
+- The attackers reach the encounter normally without premature evade/leash behavior.
+- Killing the three attackers satisfies the protection/event requirement.
+- Quest 8488 completes naturally.
+- The player can proceed normally to quest 9255.
+
+The final validation used the original SmartAI database rows, confirming the temporary waypoint-stop workaround was unnecessary.
+
+### Local Recovery Package
+
+Stored at:
+
+```text
+/srv/realmwalkers-mop/local-changes/
+```
+
+Contains the source patch, detailed notes, and reproducible SQL fix.
+
+### Upstream Suitability
+
+The SmartScript fall-through and SmartAI escort-state corrections are small core defect fixes suitable for independent upstream review.
+
+The quest-script and quest-objective corrections are isolated to quest 8488 and can be reviewed independently.
