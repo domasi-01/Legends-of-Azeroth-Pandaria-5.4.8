@@ -3174,7 +3174,8 @@ void SmartScript::ProcessEvent(SmartScriptHolder& e, Unit* unit, uint32 var0, ui
                     break;
             }
 
-            ProcessAction(e, unit, var0, var1, bvar, spell, gob);       
+            ProcessAction(e, unit, var0, var1, bvar, spell, gob);
+            break;
         case SMART_EVENT_FOLLOW_COMPLETED:
         case SMART_EVENT_ON_SPELLCLICK:
         case SMART_EVENT_ON_GO_REPORT_USE:

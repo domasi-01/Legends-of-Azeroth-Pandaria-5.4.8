@@ -595,7 +595,8 @@ void SmartAI::JustAppeared()
 
     mDespawnTime = 0;
     mDespawnState = 0;
-    mEscortState = SMART_ESCORT_NONE;
+    if (!HasEscortState(SMART_ESCORT_ESCORTING))
+        mEscortState = SMART_ESCORT_NONE;
     me->SetVisible(true);
     if (me->GetFaction() != me->GetCreatureTemplate()->faction)
         me->RestoreFaction();

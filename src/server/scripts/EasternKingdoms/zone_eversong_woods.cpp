@@ -48,6 +48,19 @@ class npc_apprentice_mirveda : public CreatureScript
 public:
     npc_apprentice_mirveda() : CreatureScript("npc_apprentice_mirveda") { }
 
+    bool OnGossipHello(Player* player, Creature* creature) override
+    {
+        if (player->GetQuestStatus(QUEST_UNEXPECTED_RESULT) == QUEST_STATUS_INCOMPLETE)
+        {
+            player->TalkedToCreature(creature->GetEntry(), creature->GetGUID());
+            return true;
+        }
+
+        player->PrepareQuestMenu(creature->GetGUID());
+        player->SEND_GOSSIP_MENU(player->GetGossipTextId(creature), creature->GetGUID());
+        return true;
+    }
+
     bool OnQuestAccept(Player* player, Creature* creature, Quest const* quest) override
     {
         if (quest->GetQuestId() == QUEST_UNEXPECTED_RESULT)
@@ -67,14 +80,14 @@ public:
     {
         npc_apprentice_mirvedaAI(Creature* creature) : ScriptedAI(creature), Summons(me) { }
 
-        uint32 KillCount;
+        uint32 DeadSummonCount;
         ObjectGuid PlayerGUID;
         bool Summon;
         SummonList Summons;
 
         void Reset() override
         {
-            KillCount = 0;
+            DeadSummonCount = 0;
             PlayerGUID = ObjectGuid::Empty;
             Summons.DespawnAll();
             Summon = false;
@@ -84,14 +97,26 @@ public:
 
         void JustSummoned(Creature* summoned) override
         {
-            summoned->AI()->AttackStart(me);
             Summons.Summon(summoned);
         }
 
         void SummonedCreatureDespawn(Creature* summoned) override
         {
             Summons.Despawn(summoned);
-            ++KillCount;
+        }
+
+        void SummonedCreatureDies(Creature* summoned, Unit* /*killer*/) override
+        {
+            if (summoned->GetEntry() != NPC_GHARZUL &&
+                summoned->GetEntry() != NPC_ANGERSHADE)
+                return;
+
+            ++DeadSummonCount;
+
+            if (DeadSummonCount >= 3 && PlayerGUID)
+                if (Player* player = ObjectAccessor::FindPlayer(PlayerGUID))
+                    if (player->GetQuestStatus(QUEST_UNEXPECTED_RESULT) == QUEST_STATUS_INCOMPLETE)
+                        player->GroupEventHappens(QUEST_UNEXPECTED_RESULT, me);
         }
 
         void JustDied(Unit* /*killer*/) override
@@ -103,16 +128,9 @@ public:
 
         void UpdateAI(uint32 /*diff*/) override
         {
-            if (KillCount >= 3 && PlayerGUID)
-                if (Player* player = ObjectAccessor::FindPlayer(PlayerGUID))
-                    if (player->GetQuestStatus(QUEST_UNEXPECTED_RESULT) == QUEST_STATUS_INCOMPLETE)
-                    {
-                        player->CompleteQuest(QUEST_UNEXPECTED_RESULT);
-                        Reset();
-                    }
-
             if (Summon)
             {
+                Talk(0);
                 me->SummonCreature(NPC_GHARZUL,    8749.505f, -7132.595f, 35.31983f, 3.816502f, TEMPSUMMON_CORPSE_DESPAWN, 4000ms);
                 me->SummonCreature(NPC_ANGERSHADE, 8755.38f, -7131.521f, 35.30957f, 3.816502f,  TEMPSUMMON_CORPSE_DESPAWN, 4000ms);
                 me->SummonCreature(NPC_ANGERSHADE, 8753.199f, -7125.975f, 35.31986f, 3.816502f, TEMPSUMMON_CORPSE_DESPAWN, 4000ms);
