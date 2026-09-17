@@ -1392,7 +1392,7 @@ bool Creature::LoadCreatureFromDB(uint32 guid, Map* map, bool addToMap)
     m_spawnId = guid;
     if (map->GetInstanceId() == 0)
     {
-        if (map->GetCreature(ObjectGuid(HighGuid::Unit, data->id, guid)))
+        if (map->GetCreatureBySpawnId(guid))
             return false;
     }
     else
