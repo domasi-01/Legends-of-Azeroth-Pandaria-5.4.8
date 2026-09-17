@@ -354,8 +354,8 @@ void TicketMgr::SendGmResponsee(WorldSession* session, GmTicket* ticket) const
         data.WriteBits(ticket->GetResponse().size(), 14);
         data.FlushBits();
 
-        data.WriteString(ticket->GetMessage());
         data.WriteString(ticket->GetResponse());
+        data.WriteString(ticket->GetMessage());
 
         data << uint32(ticket->GetTicketId());
         data << uint32(1);                                      // Response ID
