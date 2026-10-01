@@ -583,8 +583,11 @@ void TransportMgr::SpawnContinentTransports()
 
             if (TransportTemplate const* tInfo = GetTransportTemplate(entry))
                 if (!tInfo->inInstance)
-                    if (CreateTransport(entry, guid))
+                    if (Transport* transport = CreateTransport(entry, guid))
+                    {
+                        _continentTransports[entry] = transport;
                         ++count;
+                    }
 
         } while (result->NextRow());
     }

@@ -118,6 +118,14 @@ class TransportMgr
 
         // Spawns all continent transports, used at core startup
         void SpawnContinentTransports();
+
+        // Returns the live continent transport for a gameobject entry.
+        Transport* GetContinentTransport(uint32 entry) const
+        {
+            auto itr = _continentTransports.find(entry);
+            return itr != _continentTransports.end() ? itr->second : nullptr;
+        }
+
         // Spawns all local transports in the given map
         void SpawnLocalTransports(Map* map);
 
@@ -163,6 +171,9 @@ class TransportMgr
 
         // Container storing transport templates
         TransportTemplates _transportTemplates;
+
+        // Live non-instanced continent transports, indexed by gameobject entry.
+        std::unordered_map<uint32, Transport*> _continentTransports;
 
         // Container storing transport entries to create for instanced maps
         TransportInstanceMap _instanceTransports;

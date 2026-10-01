@@ -79,6 +79,7 @@
 #include "SpellMgr.h"
 #include "SpellPackets.h"
 #include "Transport.h"
+#include "TransportMgr.h"
 #include "TradeData.h"
 #include "UpdateData.h"
 #include "UpdateFieldFlags.h"
@@ -15798,6 +15799,84 @@ uint32 Player::GetGossipTextId(uint32 menuId, WorldObject* source)
 
     if (!menuId)
         return textId;
+
+    // Classic Horde Zeppelin tracker gossip.
+    //
+    // These menus contain multiple unconditional gossip_menu rows. Select
+    // the status text from the actual live transport timer instead of
+    // allowing the normal gossip loop to select the final row.
+    struct ZeppelinGossipInfo
+    {
+        uint32 MenuId;
+        uint32 TransportEntry;
+        uint32 FirstStopText;
+        uint32 FirstDepartText;
+        uint32 SecondStopText;
+        uint32 SecondDepartText;
+    };
+
+    static ZeppelinGossipInfo const zeppelinGossip[] =
+    {
+        // Grom'gol <-> Orgrimmar
+        { 8764, 175080, 11167, 11172, 11169, 11170 },
+
+        // Orgrimmar <-> Undercity
+        { 8765, 164871, 11165, 11174, 11173, 11175 },
+
+        // Grom'gol <-> Undercity
+        { 8766, 176495, 11180, 11181, 11179, 11182 }
+    };
+
+    for (ZeppelinGossipInfo const& info : zeppelinGossip)
+    {
+        if (menuId != info.MenuId)
+            continue;
+
+        Transport* transport = sTransportMgr->GetContinentTransport(info.TransportEntry);
+        if (!transport)
+            break;
+
+        KeyFrame const* firstStop = nullptr;
+        KeyFrame const* secondStop = nullptr;
+
+        for (KeyFrame const& frame : transport->GetKeyFrames())
+        {
+            if (!frame.IsStopFrame())
+                continue;
+
+            if (!firstStop)
+                firstStop = &frame;
+            else
+            {
+                secondStop = &frame;
+                break;
+            }
+        }
+
+        if (!firstStop || !secondStop)
+            break;
+
+        uint32 timer = transport->GetTimer() % transport->GetTransportPeriod();
+
+        // Docked at the first stop.
+        if (timer >= firstStop->ArriveTime &&
+            timer < firstStop->DepartureTime)
+            return info.FirstStopText;
+
+        // Travelling from the first stop to the second.
+        if (timer >= firstStop->DepartureTime &&
+            timer < secondStop->ArriveTime)
+            return info.FirstDepartText;
+
+        // Docked at the second stop.
+        if (timer >= secondStop->ArriveTime &&
+            timer < secondStop->DepartureTime)
+            return info.SecondStopText;
+
+        // Travelling from the second stop back to the first.
+        // This interval wraps through the end of the route period.
+        return info.SecondDepartText;
+    }
 
     GossipMenusMapBounds menuBounds = sObjectMgr->GetGossipMenusMapBounds(menuId);
 
