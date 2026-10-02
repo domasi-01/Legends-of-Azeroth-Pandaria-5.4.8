@@ -439,7 +439,7 @@ void ObjectMgr::LoadCreatureTemplates()
     //                                            73           74         75           76           77          78            79          80          81          82          83
                                               "HoverHeight, Health_mod, Mana_mod, Mana_mod_extra, Armor_mod, RacialLeader, questItem1, questItem2, questItem3, questItem4, questItem5, "
     //                                            84           85          86           87            88                   89               90          91
-                                              " questItem6, movementId, RegenHealth, VignetteID, TrackingQuestID,  mechanic_immune_mask, flags_extra, ScriptName "
+                                              " questItem6, movementId, RegenHealth, VignetteID, TrackingQuestID,  mechanic_immune_mask, flags_extra, ScriptName, DamageModifier "
                                               "FROM creature_template ct LEFT JOIN creature_template_movement ctm ON ct.entry = ctm.CreatureId;");
 
     if (!result)
@@ -564,7 +564,14 @@ void ObjectMgr::LoadCreatureTemplate(Field* fields)
         creatureTemplate.MechanicImmuneMask = fields[84].GetUInt32();
         creatureTemplate.flags_extra        = fields[85].GetUInt32();
         creatureTemplate.ScriptID           = GetScriptId(fields[86].GetString());
-        creatureTemplate.dmg_multiplier     = 1.0f;
+        creatureTemplate.dmg_multiplier     = fields[87].GetFloat();
+
+        if (creatureTemplate.dmg_multiplier <= 0.0f)
+        {
+            TC_LOG_ERROR("sql.sql", "Creature (Entry: %u) has invalid DamageModifier %f. Using 1.0 instead.",
+                entry, creatureTemplate.dmg_multiplier);
+            creatureTemplate.dmg_multiplier = 1.0f;
+        }
 }
 
 void ObjectMgr::LoadCreatureTemplateModels()
