@@ -1432,8 +1432,9 @@ class ObjectMgr
         uint32 GenerateMuteID();
         uint64 GenerateBattlePetId();
         uint64 GenerateVoidStorageItemId();
-        uint64 GenerateCreatureSpawnId();
-        uint64 GenerateGameObjectSpawnId();
+        // RW-FIX-014: runtime GUIDs and persistent spawn IDs reserve from the same sequences.
+        ObjectGuid::LowType GenerateCreatureSpawnId();
+        ObjectGuid::LowType GenerateGameObjectSpawnId();
 
         MailLevelReward const* GetMailLevelReward(uint32 level, uint32 raceMask)
         {
@@ -1806,8 +1807,9 @@ class ObjectMgr
         std::atomic<uint32> _hiPetNumber{ 1 };
         std::atomic<uint64> _voidItemId{ 1 };
         std::atomic<uint32> _battlePetId{ 1 };
-        std::atomic<uint64> _creatureSpawnId { 1 };
-        std::atomic<uint64> _gameObjectSpawnId { 1 };
+        // Shared across all maps, including Unit/Vehicle runtime creation and new persistent spawns.
+        std::atomic<uint64> _creatureGuid { 1 };
+        std::atomic<uint64> _gameObjectGuid { 1 };
 
         // first free low guid for selected guid type
         template<HighGuid high>

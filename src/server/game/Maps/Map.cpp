@@ -244,6 +244,16 @@ void Map::DeleteStateMachine()
     delete si_GridStates[GRID_STATE_REMOVAL];
 }
 
+ObjectGuid::LowType Map::GenerateCreatureGuid()
+{
+    return sObjectMgr->GenerateCreatureSpawnId();
+}
+
+ObjectGuid::LowType Map::GenerateGameObjectGuid()
+{
+    return sObjectMgr->GenerateGameObjectSpawnId();
+}
+
 Map::Map(uint32 id, time_t expiry, uint32 InstanceId, uint16 SpawnMode, Map* _parent):
 _creatureToMoveLock(false), _gameObjectsToMoveLock(false), _dynamicObjectsToMoveLock(false),
 i_mapEntry(sMapStore.LookupEntry(id)), i_spawnMode(SpawnMode), i_InstanceId(InstanceId),

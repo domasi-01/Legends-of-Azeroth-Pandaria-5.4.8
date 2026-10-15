@@ -622,7 +622,13 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         inline ObjectGuid::LowType GenerateLowGuid()
         {
             static_assert(ObjectGuidTraits<high>::MapSpecific, "Only map specific guid can be generated in Map context");
-            return GetGuidSequenceGenerator<high>().Generate();
+            // RW-FIX-014: database-backed namespaces must share reservations across maps and spawns.
+            if constexpr (high == HighGuid::Unit || high == HighGuid::Vehicle)
+                return GenerateCreatureGuid();
+            else if constexpr (high == HighGuid::GameObject)
+                return GenerateGameObjectGuid();
+            else
+                return GetGuidSequenceGenerator<high>().Generate();
         }
 
         uint32 GetUpdateTime() const { return m_updateTime; }
@@ -807,6 +813,9 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
             else
                 return m_activeNonPlayers.erase(obj) != 0;
         }
+
+        ObjectGuid::LowType GenerateCreatureGuid();
+        ObjectGuid::LowType GenerateGameObjectGuid();
 
         template<HighGuid high>
         inline ObjectGuidGeneratorBase& GetGuidSequenceGenerator()

@@ -56,6 +56,26 @@
 #include "DBCStructure.h"
 #include "Realm.h"
 
+namespace
+{
+    // RW-FIX-014: preserve the historical exclusive 24-bit limit. Some spawn references
+    // are MEDIUMINT UNSIGNED even though runtime ObjectGuid counters are 32-bit.
+    constexpr uint64 SpawnGuidLimit = 0x00FFFFFE;
+
+    ObjectGuid::LowType ReserveSpawnGuid(std::atomic<uint64>& sequence, char const* objectType)
+    {
+        uint64 guid = sequence.load(std::memory_order_relaxed);
+        for (;;)
+        {
+            // ASSERT is non-returning: exhaustion must never fall through to narrowing/return.
+            ASSERT(guid != 0 && guid < SpawnGuidLimit,
+                "RW-FIX-014: %s GUID reservation exhausted the legacy 24-bit range", objectType);
+            if (sequence.compare_exchange_weak(guid, guid + 1, std::memory_order_relaxed))
+                return static_cast<ObjectGuid::LowType>(guid);
+        }
+    }
+}
+
 ScriptMapMap sSpellScripts;
 ScriptMapMap sEventScripts;
 ScriptMapMap sWaypointScripts;
@@ -6852,8 +6872,11 @@ void ObjectMgr::SetHighestGuids()
         GetGuidSequenceGenerator<HighGuid::Player>().Set((*result)[0].GetUInt32() + 1);
 
     result = WorldDatabase.Query("SELECT MAX(guid) FROM creature");
-    if (result)
-        _creatureSpawnId = (*result)[0].GetUInt32() + 1;
+    ASSERT(result, "RW-FIX-014: cannot initialize the creature GUID reservation sequence");
+    uint64 maxCreatureGuid = (*result)[0].GetUInt32();
+    ASSERT(maxCreatureGuid < SpawnGuidLimit - 1,
+        "RW-FIX-014: creature database GUID range leaves no legacy 24-bit reservation capacity");
+    _creatureGuid.store(maxCreatureGuid + 1, std::memory_order_relaxed);
 
     result = CharacterDatabase.Query("SELECT MAX(guid) FROM item_instance");
     if (result)
@@ -6867,8 +6890,11 @@ void ObjectMgr::SetHighestGuids()
     CharacterDatabase.PExecute("DELETE FROM guild_bank_item WHERE item_guid >= '%u'", hiItemGuid);     // One-time query
 
     result = WorldDatabase.Query("SELECT MAX(guid) FROM gameobject");
-    if (result)
-        _gameObjectSpawnId = (*result)[0].GetUInt32() + 1;
+    ASSERT(result, "RW-FIX-014: cannot initialize the GameObject GUID reservation sequence");
+    uint64 maxGameObjectGuid = (*result)[0].GetUInt32();
+    ASSERT(maxGameObjectGuid < SpawnGuidLimit - 1,
+        "RW-FIX-014: GameObject database GUID range leaves no legacy 24-bit reservation capacity");
+    _gameObjectGuid.store(maxGameObjectGuid + 1, std::memory_order_relaxed);
 
     result = WorldDatabase.Query("SELECT MAX(guid) FROM transports");
     if (result)
@@ -7474,24 +7500,14 @@ uint64 ObjectMgr::GenerateVoidStorageItemId()
     return ++_voidItemId;
 }
 
-uint64 ObjectMgr::GenerateCreatureSpawnId()
+ObjectGuid::LowType ObjectMgr::GenerateCreatureSpawnId()
 {
-    if (_creatureSpawnId >= uint64(0xFFFFFFFFFFFFFFFELL))
-    {
-        TC_LOG_ERROR("misc", "Creature spawn id overflow!! Can't continue, shutting down server. Search on forum for TCE00007 for more info.");
-        World::StopNow(ERROR_EXIT_CODE);
-    }
-    return _creatureSpawnId++;
+    return ReserveSpawnGuid(_creatureGuid, "Creature/Vehicle");
 }
 
-uint64 ObjectMgr::GenerateGameObjectSpawnId()
+ObjectGuid::LowType ObjectMgr::GenerateGameObjectSpawnId()
 {
-    if (_gameObjectSpawnId >= uint64(0xFFFFFFFFFFFFFFFELL))
-    {
-        TC_LOG_ERROR("misc", "Game object spawn id overflow!! Can't continue, shutting down server. Search on forum for TCE00007 for more info. ");
-        World::StopNow(ERROR_EXIT_CODE);
-    }
-    return _gameObjectSpawnId++;
+    return ReserveSpawnGuid(_gameObjectGuid, "GameObject");
 }
 
 void ObjectMgr::LoadReputationRewardRate()

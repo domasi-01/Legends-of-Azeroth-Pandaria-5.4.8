@@ -248,9 +248,7 @@ public:
         Transport* trans = chr->GetTransport();
         if (trans && trans->GetGoType() == GAMEOBJECT_TYPE_MO_TRANSPORT)
         {
-            QueryResult result = WorldDatabase.Query("SELECT MAX(guid) + 1 FROM creature");
-            ASSERT(result);
-            uint32 guid = (*result)[0].GetUInt32();
+            uint32 guid = sObjectMgr->GenerateCreatureSpawnId();
             CreatureData& data = sObjectMgr->NewOrExistCreatureData(guid);
             data.id = id;
             data.phaseMask = chr->GetPhaseMgr().GetPhaseMaskForSpawn();
