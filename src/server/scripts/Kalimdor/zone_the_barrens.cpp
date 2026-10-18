@@ -31,6 +31,7 @@ EndContentData */
 #include "ScriptedGossip.h"
 #include "ScriptedEscortAI.h"
 #include "Player.h"
+#include "Vehicle.h"
 #include "SpellInfo.h"
 
 /*######
@@ -905,6 +906,167 @@ class spell_barrens_bandage : public SpellScript
     }
 };
 
+
+// ============================================================
+// RW-FIX-015
+// Quest 13628 - Got Wood?
+// Restore Brutusk transport from the Mor'shan Rampart to
+// Warsong Labor Camp.
+// ============================================================
+
+enum BrutuskTransport
+{
+    QUEST_GOT_WOOD       = 13628,
+    NPC_BRUTUSK_VEHICLE  = 33386,
+    SPELL_BRUTUSK_CREDIT = 62890
+};
+
+struct npc_brutusk_transport : public npc_escortAI
+{
+    npc_brutusk_transport(Creature* creature) : npc_escortAI(creature)
+    {
+    }
+
+    bool rideStarted = false;
+    bool boardingRequested = false;
+
+    void Reset() override
+    {
+        rideStarted = false;
+        boardingRequested = false;
+    }
+
+    void PassengerBoarded(Unit* passenger, int8 /*seatId*/, bool apply) override
+    {
+        Player* player = passenger->ToPlayer();
+        if (!player)
+            return;
+
+        if (!apply)
+        {
+            // Whether the player reached Warsong Labor Camp or dismounted
+            // early, this transport belongs only to this ride.
+            me->DespawnOrUnsummon(2000);
+            return;
+        }
+
+        if (rideStarted)
+            return;
+
+        QuestStatus questStatus = player->GetQuestStatus(QUEST_GOT_WOOD);
+        if (questStatus != QUEST_STATUS_INCOMPLETE &&
+            questStatus != QUEST_STATUS_COMPLETE)
+        {
+            player->ExitVehicle();
+            return;
+        }
+
+        rideStarted = true;
+
+        // Spell 62890 grants the quest objective credit for mounting Brutusk.
+        player->CastSpell(player, SPELL_BRUTUSK_CREDIT, true);
+
+        Start(false, true, player->GetGUID());
+        me->SetSpeed(MOVE_WALK, 1.0f, true);
+        me->SetSpeed(MOVE_RUN, 1.3f, true);
+    }
+
+    void WaypointReached(uint32 pointId) override
+    {
+        if (pointId != 10)
+            return;
+
+        if (Vehicle* vehicle = me->GetVehicleKit())
+            if (Unit* passenger = vehicle->GetPassenger(0))
+                if (Player* player = passenger->ToPlayer())
+                    player->ExitVehicle();
+    }
+
+    // Seat 0 gives the player control/charm of the vehicle. Keep the escort
+    // AI active while Brutusk is carrying the player.
+    void OnCharmed(bool /*apply*/) override
+    {
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        // A newly summoned vehicle is reset during its first Creature::Update().
+        // Boarding before that reset causes Vehicle::Reset() to eject the
+        // passenger. Wait until the transport AI receives its normal update.
+        if (!boardingRequested && !rideStarted)
+        {
+            if (TempSummon* summon = me->ToTempSummon())
+            {
+                if (Unit* summoner = summon->GetSummoner())
+                {
+                    if (Player* player = summoner->ToPlayer())
+                    {
+                        QuestStatus questStatus =
+                            player->GetQuestStatus(QUEST_GOT_WOOD);
+
+                        if (questStatus == QUEST_STATUS_INCOMPLETE ||
+                            questStatus == QUEST_STATUS_COMPLETE)
+                        {
+                            boardingRequested = true;
+                            player->EnterVehicle(me, 0, true);
+                        }
+                        else
+                        {
+                            boardingRequested = true;
+                            me->DespawnOrUnsummon();
+                        }
+                    }
+                }
+            }
+        }
+
+        npc_escortAI::UpdateAI(diff);
+    }
+};
+
+struct npc_brutusk_static : public ScriptedAI
+{
+    npc_brutusk_static(Creature* creature) : ScriptedAI(creature)
+    {
+    }
+
+    void OnSpellClick(Unit* clicker, bool& result) override
+    {
+        Player* player = clicker->ToPlayer();
+        if (!player)
+        {
+            result = false;
+            return;
+        }
+
+        QuestStatus questStatus = player->GetQuestStatus(QUEST_GOT_WOOD);
+        if (questStatus != QUEST_STATUS_INCOMPLETE &&
+            questStatus != QUEST_STATUS_COMPLETE)
+        {
+            result = false;
+            return;
+        }
+
+        TempSummon* brutusk = player->SummonCreature(
+            NPC_BRUTUSK_VEHICLE,
+            me->GetPositionX(),
+            me->GetPositionY(),
+            me->GetPositionZ(),
+            me->GetOrientation(),
+            TEMPSUMMON_MANUAL_DESPAWN);
+
+        if (!brutusk)
+        {
+            result = false;
+            return;
+        }
+
+        // Do not board here. The transport AI boards the summoner after the
+        // newly created vehicle has completed its initial reset.
+        result = true;
+    }
+};
+
 void AddSC_the_barrens()
 {
     new npc_wizzlecrank_shredder();
@@ -914,4 +1076,9 @@ void AddSC_the_barrens()
     new AreaTrigger_at_groldom_farm();
     new creature_script<npc_barrent_wounded_defender>("npc_barrent_wounded_defender");
     new spell_script<spell_barrens_bandage>("spell_barrens_bandage");
+    new creature_script<npc_brutusk_static>(
+        "npc_brutusk_static");
+    new creature_script<npc_brutusk_transport>(
+        "npc_brutusk_transport");
+
 }
